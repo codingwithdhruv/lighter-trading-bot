@@ -1,0 +1,6 @@
+lighter-sdk
+python-telegram-bot
+python-dotenv
+websockets
+asyncio
+aiohttp
