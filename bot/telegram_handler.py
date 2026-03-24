@@ -225,7 +225,7 @@ class TelegramBotHandler:
                 usdc_val = 0.0
                 for asset in (account.assets or []):
                     if asset.symbol == 'USDC':
-                        usdc_val = float(asset.available_amount)
+                        usdc_val = float(asset.balance) - float(asset.locked_balance)
                         break
                 
                 collateral = float(account.collateral)
@@ -351,21 +351,31 @@ class TelegramBotHandler:
             if not trades:
                 text += "\nNo transaction history found."
             else:
-                # Group by tx_hash to show 'Position Events'
+                # Group by market and time window (5 min) to show aggregated movements
                 groups = {}
+                WINDOW_MS = 300000 
                 for t in trades:
-                    tx = t.get('tx_hash')
-                    if tx not in groups:
-                        groups[tx] = {"trades": [], "total_usd": 0, "total_pnl": 0, "timestamp": t.get('timestamp'), "mkt": t.get('market_id')}
-                    groups[tx]["trades"].append(t)
-                    groups[tx]["total_usd"] += float(t.get('usd_amount', 0))
+                    mkt = t.get('market_id')
+                    ts = int(t.get('timestamp') or 0)
+                    key = f"{mkt}_{ts // WINDOW_MS}"
+                    
+                    if key not in groups:
+                        groups[key] = {
+                            "trades": [], 
+                            "total_usd": 0, 
+                            "total_pnl": 0, 
+                            "timestamp": ts, 
+                            "mkt": mkt
+                        }
+                    groups[key]["trades"].append(t)
+                    groups[key]["total_usd"] += float(t.get('usd_amount', 0))
                     
                     pnl = 0.0
                     if str(t.get('ask_account_id')) == str(LIGHTER_ACCOUNT_INDEX):
                         pnl = float(t.get('ask_account_pnl', 0))
                     elif str(t.get('bid_account_id')) == str(LIGHTER_ACCOUNT_INDEX):
                         pnl = float(t.get('bid_account_pnl', 0))
-                    groups[tx]["total_pnl"] += pnl
+                    groups[key]["total_pnl"] += pnl
 
                 # Sort by timestamp desc and take top 5 entries
                 sorted_txs = sorted(groups.items(), key=lambda x: x[1]['timestamp'], reverse=True)[:5]

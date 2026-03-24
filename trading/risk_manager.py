@@ -81,11 +81,15 @@ async def place_tp_sl_orders(signal: TradeSignal, is_ask: bool, client_order_ind
         )
 
         logger.info(f"Placing TP/SL OCO Order. TP Limit: {tp_limit}, SL Limit: {sl_limit}")
-        transaction = await client.create_grouped_orders(
+        tx, resp, err = await client.create_grouped_orders(
             grouping_type=client.GROUPING_TYPE_ONE_CANCELS_THE_OTHER,
             orders=[take_profit_order, stop_loss_order],
         )
-        logger.info(f"TP/SL Grouped Order Executed successfully: {transaction}")
+        if err:
+            logger.error(f"Failed to place TP/SL OCO: {err}")
+            return False
+            
+        logger.info(f"TP/SL Grouped Order Executed successfully. TxHash: {resp.tx_hash}")
         return True
     
     except Exception as e:
