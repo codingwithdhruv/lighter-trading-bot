@@ -18,9 +18,24 @@ A high-performance, Telegram-first trading terminal for **Lighter Exchange**. Op
     # Fill in your Lighter Private Key, API Key Index, and Telegram Token
     ```
 2.  **Deploy**:
+
+    **Using Docker (Recommended):**
     ```bash
     docker build -t lighter-bot .
     docker run --env-file .env lighter-bot
+    ```
+
+    **Using Local Python:**
+    ```bash
+    # Create and activate virtual environment
+    python3 -m venv venv
+    source venv/bin/activate
+
+    # Install dependencies
+    pip install -r requirements.txt
+
+    # Run the bot
+    python3 main.py
     ```
 
 ## 📱 Commands

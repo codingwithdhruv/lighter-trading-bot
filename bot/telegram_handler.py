@@ -221,17 +221,21 @@ class TelegramBotHandler:
             acc_info = await account_api.account(by="index", value=str(LIGHTER_ACCOUNT_INDEX))
             if acc_info.accounts:
                 account = acc_info.accounts[0]
-                # Find USDC in assets
+                # Find USDC in assets (Free USDC)
                 usdc_val = 0.0
                 for asset in (account.assets or []):
                     if asset.symbol == 'USDC':
                         usdc_val = float(asset.balance) - float(asset.locked_balance)
                         break
                 
+                # Calculate USDC in positions (Total Margin)
+                usdc_in_positions = sum(float(p.allocated_margin) for p in (account.positions or []))
+                
                 collateral = float(account.collateral)
                 total_val = float(account.total_asset_value)
                 
                 text += f"💵 USDC Available: `${usdc_val:,.2f}`\n"
+                text += f"💰 USDC in Positions: `${usdc_in_positions:,.2f}`\n"
                 text += f"🏦 Collateral: `${collateral:,.2f}`\n"
                 text += f"📊 Total Equity: `${total_val:,.2f}`\n"
                 
@@ -377,8 +381,11 @@ class TelegramBotHandler:
                         pnl = float(t.get('bid_account_pnl', 0))
                     groups[key]["total_pnl"] += pnl
 
-                # Sort by timestamp desc and take top 5 entries
-                sorted_txs = sorted(groups.items(), key=lambda x: x[1]['timestamp'], reverse=True)[:5]
+                # Sort by timestamp desc and filter for entries with PnL impact
+                sorted_txs = [
+                    (k, v) for k, v in groups.items() if abs(v['total_pnl']) > 0.001
+                ]
+                sorted_txs = sorted(sorted_txs, key=lambda x: x[1]['timestamp'], reverse=True)[:5]
                 
                 for i, (tx, data) in enumerate(sorted_txs):
                     ts = int(data['timestamp'])
