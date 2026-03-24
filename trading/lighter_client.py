@@ -11,7 +11,6 @@ class LighterTradingClient:
     
     def initialize(self) -> Optional[Exception]:
         try:
-            # Reformat the private_keys correctly mapping API KEY INDEX to the key
             from utils.config import LIGHTER_API_KEY_INDEX
             private_keys = {LIGHTER_API_KEY_INDEX: LIGHTER_PRIVATE_KEY}
             
@@ -33,8 +32,16 @@ class LighterTradingClient:
             logger.error(f"Failed to initialize Lighter clients: {e}")
             return e
 
+    def get_auth_token(self) -> str:
+        """Generate an auth token for authenticated API calls."""
+        if not self.signer_client:
+            return ""
+        result = self.signer_client.create_auth_token_with_expiry()
+        if isinstance(result, tuple):
+            return result[0]
+        return result
+
     async def get_ws_connection(self):
-        """Returns a websockets connection to the Lighter WSS stream."""
         ws_url = LIGHTER_API_URL.replace("https", "wss") + "/stream"
         return await websockets.connect(ws_url)
 
@@ -45,3 +52,4 @@ class LighterTradingClient:
             await self.api_client.close()
             
 lighter_wrapper = LighterTradingClient()
+

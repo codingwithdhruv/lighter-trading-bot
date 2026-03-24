@@ -1,7 +1,7 @@
 from trading.lighter_client import lighter_wrapper
 from bot.parser import TradeSignal
 from utils.logger import logger
-from utils.config import MARKET_ID_BTC
+from trading.market_config import market_registry
 from trading.risk_manager import place_tp_sl_orders
 
 async def execute_trade(signal: TradeSignal, trigger_price: float = None) -> bool:
@@ -14,10 +14,12 @@ async def execute_trade(signal: TradeSignal, trigger_price: float = None) -> boo
         return False
         
     try:
+        market_id = market_registry.get_market_id(signal.asset)
+        
         # 1. Update Leverage
-        margin_mode = client.CROSS_MARGIN_MODE
+        margin_mode = client.ISOLATED_MARGIN_MODE
         tx, tx_hash, err = await client.update_leverage(
-            market_index=MARKET_ID_BTC,
+            market_index=market_id,
             leverage=signal.leverage,
             margin_mode=margin_mode
         )
@@ -42,7 +44,7 @@ async def execute_trade(signal: TradeSignal, trigger_price: float = None) -> boo
         logger.info(log_msg)
         
         tx, tx_hash, err = await client.create_market_order_quote_amount(
-            market_index=MARKET_ID_BTC,
+            market_index=market_id,
             client_order_index=client_order_index,
             quote_amount=quote_amount,
             max_slippage=0.01, # 1% slippage tolerance

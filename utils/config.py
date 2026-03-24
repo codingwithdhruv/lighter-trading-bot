@@ -21,6 +21,7 @@ ALLOWED_TELEGRAM_USER_IDS = [
 # Internal Config
 POLL_INTERVAL_SEC = 10 # frequency to check candlesticks in seconds
 MARKET_ID_BTC = 1 # 1 is BTC/USDC Perp on Lighter Mainnet
+MAX_TRIGGER_SLIPPAGE = float(os.getenv("MAX_TRIGGER_SLIPPAGE", 150.0))
 
 def validate_config():
     missing = []

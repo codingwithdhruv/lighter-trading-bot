@@ -8,6 +8,7 @@ from bot.parser import TradeSignal
 from data.market_listener import MarketListener
 from trading.lighter_client import lighter_wrapper
 from trading.execution import execute_trade
+from trading.market_config import market_registry
 
 class BotApplication:
     def __init__(self):
@@ -25,6 +26,12 @@ class BotApplication:
                 logger.error("Failed to initialize system due to Lighter setup errors.")
                 sys.exit(1)
 
+            logger.info("Initializing Market Registry...")
+            success = await market_registry.initialize(lighter_wrapper.api_client)
+            if not success:
+                logger.error("Failed to initialize Market Registry.")
+                sys.exit(1)
+
             logger.info("Setting up internal modules...")
             self.market_listener = MarketListener(execute_callback=self._on_trade_execute)
             
@@ -34,6 +41,8 @@ class BotApplication:
                 on_signal_callback=self._on_new_signal, 
                 app_context=self
             )
+            # Link bot to listener for order alerts
+            self.market_listener.bot_handler = self.telegram_bot
             
         except Exception as e:
             logger.error(f"Initialization error: {e}")
@@ -56,7 +65,8 @@ class BotApplication:
         success = await execute_trade(signal, trigger_price=trigger_price)
         
         if success:
-            await self.telegram_bot.send_message(f"✅ Trade executed successfully! TP and SL are set.\nTP: {signal.tp}\nSL: {signal.sl}\nCheck your Lighter positions.")
+            # Send the interactive position card
+            await self.telegram_bot.send_position_card(signal, entry_price=trigger_price or 0)
         else:
             await self.telegram_bot.send_message(f"❌ Failed to execute trade or place TP/SL. Check logs.")
             
@@ -87,6 +97,8 @@ class BotApplication:
             await self.telegram_bot.stop()
         if self.market_listener:
             self.market_listener.stop()
+        if hasattr(self, 'chart_runner') and self.chart_runner:
+            await self.chart_runner.cleanup()
         await lighter_wrapper.close()
 
 

@@ -2,7 +2,7 @@ from lighter.signer_client import CreateOrderTxReq
 from trading.lighter_client import lighter_wrapper
 from bot.parser import TradeSignal
 from utils.logger import logger
-from utils.config import MARKET_ID_BTC
+from trading.market_config import market_registry
 
 async def place_tp_sl_orders(signal: TradeSignal, is_ask: bool, client_order_index: int) -> bool:
     """
@@ -27,8 +27,9 @@ async def place_tp_sl_orders(signal: TradeSignal, is_ask: bool, client_order_ind
         # WARNING: This logic needs proper scaling per Lighter Market specs.
         # For this prototype, we'll assume the raw values need an appropriate scale from the user or default to *100.
         # We will use the exact values, the SDK takes integers or floats based on definition.
-        # In lighter examples `Price=1550_00` means a scale of 100 on ETH. So we multiply by 100 for standard format.
-        PRICE_SCALE = 100 
+        # We use the MarketRegistry scaling configured dynamically via Lighter API
+        market_id = market_registry.get_market_id(signal.asset)
+        PRICE_SCALE = market_registry.get_price_scale(signal.asset) 
         
         tp_limit = int(signal.tp * PRICE_SCALE)
         sl_limit = int(signal.sl * PRICE_SCALE)
@@ -54,7 +55,7 @@ async def place_tp_sl_orders(signal: TradeSignal, is_ask: bool, client_order_ind
             tp_limit = int(signal.tp * PRICE_SCALE * 1.001)
 
         take_profit_order = CreateOrderTxReq(
-            MarketIndex=MARKET_ID_BTC,
+            MarketIndex=market_id,
             ClientOrderIndex=client_order_index + 1,
             BaseAmount=0, # 0 means ReduceOnly for the full position typically
             Price=tp_limit,
@@ -67,7 +68,7 @@ async def place_tp_sl_orders(signal: TradeSignal, is_ask: bool, client_order_ind
         )
 
         stop_loss_order = CreateOrderTxReq(
-            MarketIndex=MARKET_ID_BTC,
+            MarketIndex=market_id,
             ClientOrderIndex=client_order_index + 2,
             BaseAmount=0,
             Price=sl_limit,
