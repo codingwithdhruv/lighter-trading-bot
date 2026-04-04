@@ -62,6 +62,9 @@ class BotApplication:
         
         await self.telegram_bot.send_message(alert_msg)
         
+        # Mark BEFORE execution to prevent position monitor from auto-copying
+        self.market_listener.mark_as_bot_executed(signal.asset)
+        
         success = await execute_trade(signal, trigger_price=trigger_price)
         
         if success:
@@ -71,6 +74,7 @@ class BotApplication:
             await self.telegram_bot.send_message(f"❌ Failed to execute trade or place TP/SL. Check logs.")
             
         return success
+
 
     async def run_forever(self):
         """Run the continuous loops for Telegram and Market Listener."""
@@ -97,8 +101,6 @@ class BotApplication:
             await self.telegram_bot.stop()
         if self.market_listener:
             self.market_listener.stop()
-        if hasattr(self, 'chart_runner') and self.chart_runner:
-            await self.chart_runner.cleanup()
         await lighter_wrapper.close()
 
 

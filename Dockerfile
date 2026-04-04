@@ -1,5 +1,5 @@
 # Use a supported platform (Linux x64)
-FROM python:3.9-slim
+FROM python:3.11-slim
 
 WORKDIR /app
 

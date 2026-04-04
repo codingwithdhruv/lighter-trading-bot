@@ -1,18 +1,22 @@
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 @dataclass
 class TradeSignal:
     asset: str
-    condition_type: str # 'ABOVE' or 'BELOW'
+    condition_type: str  # 'ABOVE' or 'BELOW'
     condition_price: float
     size: float
     leverage: int
-    side: str # 'LONG' or 'SHORT'
+    side: str  # 'LONG' or 'SHORT'
     tp: Optional[float] = None
     sl: Optional[float] = None
-    expiry_at: int = 0  # Timestamp in seconds
+    tp_is_pips: bool = False  # True if tp value is in pips (price points)
+    sl_is_pips: bool = False  # True if sl value is in pips (price points)
+    tp_pips: float = 0.0      # Original pip distance if provided
+    sl_pips: float = 0.0      # Original pip distance if provided
+    expiry_at: int = 0        # Timestamp in seconds
 
 def parse_signal(text: str) -> Optional[TradeSignal]:
     """
@@ -21,6 +25,7 @@ def parse_signal(text: str) -> Optional[TradeSignal]:
     - BTC < 65000 SHORT TP: 64000
     - ETH > 2500 SIZE: 10
     - BTC CLOSE BELOW 68000 SIDE: SHORT
+    - BTC > 69500 LONG TP: 250p SL: 150p  (pip-based)
     """
     try:
         text_upper = text.strip().upper()
@@ -28,8 +33,6 @@ def parse_signal(text: str) -> Optional[TradeSignal]:
         if not lines: return None
         
         # 1. Parse Header (Asset, Condition, Price)
-        # Regex to match: [ASSET] [CONDITION] [PRICE]
-        # Condition can be: ABOVE, BELOW, >, <, >=, <=, CLOSE ABOVE, CLOSE BELOW
         header_pattern = r'^([A-Z0-9]+)\s*(?:CLOSE\s+)?(ABOVE|BELOW|>|<|>=|<=)\s*([\d\.,]+)'
         header_match = re.search(header_pattern, lines[0])
         if not header_match:
@@ -47,8 +50,8 @@ def parse_signal(text: str) -> Optional[TradeSignal]:
             
         # 2. Extract Key-Value Pairs from whole text
         data_map = {}
-        # Find all KEY: VALUE matches
-        kv_pairs = re.findall(r'([A-Z]+)\s*:\s*([\d\.,A-Z]+)', text_upper)
+        # Find all KEY: VALUE matches (including values with 'P' suffix for pips)
+        kv_pairs = re.findall(r'([A-Z]+)\s*:\s*([\d\.,]+[Pp]?)', text_upper)
         for k, v in kv_pairs:
             data_map[k] = v
             
@@ -70,9 +73,15 @@ def parse_signal(text: str) -> Optional[TradeSignal]:
         lev_str = data_map.get('LEVERAGE', data_map.get('LEV', '40')).replace('X', '').strip()
         leverage = int(lev_str)
         
-        # TP/SL
-        tp = float(data_map.get('TP', '0'))
-        sl = float(data_map.get('SL', '0'))
+        # TP/SL — support pip syntax (e.g., "250P" or "250p")
+        tp_raw = data_map.get('TP', '0')
+        sl_raw = data_map.get('SL', '0')
+        
+        tp_is_pips = tp_raw.upper().endswith('P')
+        sl_is_pips = sl_raw.upper().endswith('P')
+        
+        tp = float(tp_raw.rstrip('Pp')) if tp_raw else 0
+        sl = float(sl_raw.rstrip('Pp')) if sl_raw else 0
         
         # Expiry (Default 120 mins)
         expiry_mins = 120
@@ -84,7 +93,9 @@ def parse_signal(text: str) -> Optional[TradeSignal]:
         expiry_at = int(time.time()) + (expiry_mins * 60)
 
         from utils.logger import logger
-        logger.info(f"Parsed Signal: {asset} {condition_type} {condition_price} Side:{side} TP:{tp} SL:{sl}")
+        tp_label = f"{tp}p (pips)" if tp_is_pips else f"${tp:,.2f}"
+        sl_label = f"{sl}p (pips)" if sl_is_pips else f"${sl:,.2f}"
+        logger.info(f"Parsed Signal: {asset} {condition_type} {condition_price} Side:{side} TP:{tp_label} SL:{sl_label}")
 
         return TradeSignal(
             asset=asset,
@@ -95,12 +106,11 @@ def parse_signal(text: str) -> Optional[TradeSignal]:
             side=side,
             tp=tp,
             sl=sl,
+            tp_is_pips=tp_is_pips,
+            sl_is_pips=sl_is_pips,
+            tp_pips=tp if tp_is_pips else 0.0,
+            sl_pips=sl if sl_is_pips else 0.0,
             expiry_at=expiry_at
         )
     except Exception as e:
-        import traceback
-        # Optional: logger.debug(traceback.format_exc())
-        return None
-    except Exception as e:
-        # Ignore completely invalid texts
         return None

@@ -4,3 +4,4 @@ python-dotenv
 websockets
 asyncio
 aiohttp
+aptos-sdk==0.7.1

@@ -51,5 +51,21 @@ class LighterTradingClient:
         if self.api_client:
             await self.api_client.close()
             
+    async def get_mark_price(self, symbol: str) -> float:
+        """Fetch the current mark price for a given symbol."""
+        if not self.api_client:
+            return 0.0
+        try:
+            from lighter.api.order_api import OrderApi
+            order_api = OrderApi(self.api_client)
+            resp = await order_api.exchange_stats_without_preload_content()
+            data = await resp.json()
+            for obs in data.get('order_book_stats', []):
+                if obs['symbol'].upper() == symbol.upper():
+                    return float(obs['last_trade_price'])
+        except Exception as e:
+            logger.error(f"Error fetching mark price for {symbol}: {e}")
+        return 0.0
+
 lighter_wrapper = LighterTradingClient()
 
