@@ -480,8 +480,18 @@ class TelegramBotHandler:
             new_state = config_manager.toggle_decibel()
             await query.answer(f"Decibel Copy: {'ENABLED' if new_state else 'DISABLED'}")
             await query.edit_message_reply_markup(reply_markup=self._get_settings_keyboard())
-        elif data in ('set_lev', 'set_maxloss', 'set_dlev', 'set_dmaxloss'):
-            await query.answer("Edit these manually in config or via future command update", show_alert=True)
+        elif data == 'set_lev':
+            context.user_data['pending_setting'] = 'pacifica_leverage'
+            await query.message.reply_text("🔢 Enter new *Pacifica Leverage* (e.g., 20):", parse_mode='Markdown')
+        elif data == 'set_maxloss':
+            context.user_data['pending_setting'] = 'pacifica_max_loss'
+            await query.message.reply_text("💰 Enter new *Pacifica Max Loss USD* (e.g., 50):", parse_mode='Markdown')
+        elif data == 'set_dlev':
+            context.user_data['pending_setting'] = 'decibel_leverage'
+            await query.message.reply_text("🔢 Enter new *Decibel Leverage* (e.g., 20):", parse_mode='Markdown')
+        elif data == 'set_dmaxloss':
+            context.user_data['pending_setting'] = 'decibel_max_loss'
+            await query.message.reply_text("💰 Enter new *Decibel Max Loss USD* (e.g., 50):", parse_mode='Markdown')
         elif data == 'menu':
             await query.edit_message_text("📱 *Main Menu*", parse_mode='Markdown', reply_markup=self._get_main_menu_keyboard())
         elif data.startswith('refresh_pos_'):
@@ -926,7 +936,42 @@ class TelegramBotHandler:
     #  MESSAGE HANDLER
     # =========================================================================
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        text = update.message.text
+        text = update.message.text.strip()
+        
+        # 1. Check for pending setting updates
+        pending = context.user_data.get('pending_setting')
+        if pending:
+            try:
+                val = float(text)
+                from core.config_manager import config_manager
+                
+                if pending == 'pacifica_leverage':
+                    config_manager.pacifica_leverage = int(val)
+                    label = "Pacifica Leverage"
+                elif pending == 'pacifica_max_loss':
+                    config_manager.pacifica_max_loss_usd = val
+                    label = "Pacifica Max Loss"
+                elif pending == 'decibel_leverage':
+                    config_manager.decibel_leverage = int(val)
+                    label = "Decibel Leverage"
+                elif pending == 'decibel_max_loss':
+                    config_manager.decibel_max_loss_usd = val
+                    label = "Decibel Max Loss"
+                
+                context.user_data.pop('pending_setting')
+                await update.message.reply_text(f"✅ *{label}* updated to `{val}`", parse_mode='Markdown')
+                # Show updated settings menu
+                await update.message.reply_text(
+                    "⚙️ *Current Settings*", 
+                    reply_markup=self._get_settings_keyboard(), 
+                    parse_mode='Markdown'
+                )
+                return
+            except ValueError:
+                await update.message.reply_text("❌ Invalid number. Please enter a numerical value or type /cancel.")
+                return
+
+        # 2. Otherwise, parse as trade signal
         signal = parse_signal(text)
         if not signal:
             await update.message.reply_text("❌ Unknown command or malformed signal.")

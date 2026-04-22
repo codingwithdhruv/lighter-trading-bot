@@ -166,7 +166,7 @@ async function main() {
         reply({
           success: result.success,
           orderId: result.orderId || null,
-          transactionHash: result.transactionHash || null,
+          transactionHash: result.transactionHash || result.hash || null,
         });
         break;
       }
@@ -201,7 +201,7 @@ async function main() {
         const tpslResult = await write.placeTpSlOrderForPosition(tpslArgs);
         reply({
           success: true,
-          transactionHash: tpslResult.hash || null,
+          transactionHash: tpslResult.transactionHash || tpslResult.hash || null,
         });
         break;
       }
