@@ -23,7 +23,18 @@ def calculate_position_size(entry_price: float, sl_pips: float, max_loss_usd: fl
     required_margin = notional_value / leverage
 
     if required_margin > available_margin:
-        logger.warning(f"Aborting trade: Required Margin (${required_margin:,.2f}) > Available Margin (${available_margin:,.2f}) for Size {position_size:.4f}")
+        # Cap the position size based on available margin (leaving a 5% buffer for fees)
+        usable_margin = available_margin * 0.95
+        max_notional = usable_margin * leverage
+        capped_size = max_notional / entry_price
+        
+        logger.warning(
+            f"Required Margin (${required_margin:,.2f}) > Available Margin (${available_margin:,.2f}). "
+            f"Capping Size from {position_size:.4f} to {capped_size:.4f}"
+        )
+        position_size = capped_size
+
+    if position_size <= 0:
         return 0, False
 
     return position_size, True
