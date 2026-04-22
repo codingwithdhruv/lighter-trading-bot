@@ -30,9 +30,22 @@ class PacificaExecutionEngine:
         if not should_execute:
             return False
 
-        # Format pos size properly for very small test trades (up to 6 decimals, strip trailing)
-        formatted_size = f"{position_size:.6f}".rstrip("0").rstrip(".")
-        if not formatted_size or formatted_size == "0":
+        # Fetch market info for lot size rounding to avoid "not a multiple of lot size" error
+        market_info = self.client.get_market_info(symbol)
+        lot_size_str = market_info.get("lot_size", "0.00001") if market_info else "0.00001"
+        lot_size = float(lot_size_str)
+        
+        # Round to nearest lot size
+        rounded_size = round(position_size / lot_size) * lot_size
+        
+        # Determine number of decimal places from lot_size_str
+        decimals = 0
+        if "." in lot_size_str:
+            decimals = len(lot_size_str.split(".")[1].rstrip("0"))
+            
+        formatted_size = f"{rounded_size:.{decimals}f}"
+        
+        if float(formatted_size) <= 0:
             logger.warning(f"PacificaExecution: Size {position_size:.8f} is too small (rounds to 0), aborting.")
             return False
         

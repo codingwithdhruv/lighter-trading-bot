@@ -63,14 +63,18 @@ class DecibelExecutionEngine:
 
         # 2. Get account balance
         available_margin = self.client.get_account_balance()
-
+        
         # 3. Calculate position size using shared risk engine
+        # For Decibel, we reserve 8% of the available margin to ensure we have enough free USDC 
+        # to pay the trading fee without getting rejected for insufficient margin.
+        safe_available_margin = available_margin * 0.92
+
         position_size, should_execute = calculate_position_size(
             entry_price=entry_price,
             sl_pips=sl_pips,
             max_loss_usd=max_loss_usd,
             leverage=leverage,
-            available_margin=available_margin,
+            available_margin=safe_available_margin,
         )
 
         if not should_execute:
