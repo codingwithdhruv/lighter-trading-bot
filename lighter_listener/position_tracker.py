@@ -119,32 +119,31 @@ class PositionTracker:
             self._positions_cache[market_idx_str] = new_size
 
     async def _discover_tpsl_pips(self, market_idx: str, side: str, entry_price: float) -> tuple[float, float]:
+        """Fetch active TP/SL orders from Lighter and convert to pip distances."""
         try:
             from lighter.api.order_api import OrderApi
+            from utils.helpers import detect_tp_sl_from_orders
+            
             order_api = OrderApi(lighter_wrapper.api_client)
             market_id = int(market_idx)
             auth_token = lighter_wrapper.get_auth_token()
+            is_long = side.upper() == "LONG"
+            
             resp = await order_api.account_active_orders_without_preload_content(
                 market_id=market_id, account_index=LIGHTER_ACCOUNT_INDEX, auth=auth_token
             )
-            
             data = await resp.json()
             
-            sl_pips = 0.0
-            tp_pips = 0.0
+            # The API returns a flat list of orders under 'orders' key
+            orders = data.get('orders', [])
             
-            for o_group in data.get('orders', []):
-                if o_group.get('market_index') == market_id:
-                    for o in o_group.get('orders', []):
-                        if o.get('type') == 'take-profit':
-                            trigger = float(o.get('trigger_price', 0))
-                            if trigger > 0 and entry_price > 0:
-                                tp_pips = abs(trigger - entry_price)
-                        elif o.get('type') == 'stop-loss':
-                            trigger = float(o.get('trigger_price', 0))
-                            if trigger > 0 and entry_price > 0:
-                                sl_pips = abs(trigger - entry_price)
-                                
+            # Reuse the proven helper that the Position HUD already uses
+            tp_price, sl_price = detect_tp_sl_from_orders(orders, is_long)
+            
+            tp_pips = abs(tp_price - entry_price) if tp_price > 0 and entry_price > 0 else 0.0
+            sl_pips = abs(sl_price - entry_price) if sl_price > 0 and entry_price > 0 else 0.0
+            
+            logger.info(f"TP/SL Discovery for Market {market_idx}: TP=${tp_price} ({tp_pips:.1f}p), SL=${sl_price} ({sl_pips:.1f}p)")
             return tp_pips, sl_pips
         except Exception as e:
             logger.error(f"Failed to fetch TP/SL orders for Market {market_idx}: {e}")

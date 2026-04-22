@@ -35,25 +35,48 @@ class DecibelClient:
     # ── REST Read Helpers ─────────────────────────────────────────────────
 
     def get_price(self, symbol: str) -> float:
-        """Fetch mark/oracle price for a symbol (e.g. 'BTC-USD')."""
+        """Fetch mark price for a symbol (e.g. 'BTC-USD').
+        
+        The /api/v1/prices endpoint returns 'mark_px' and expects a market address 
+        (not symbol) as the 'market' param. We fetch all prices and match by address.
+        """
         try:
-            # The API uses /api/v1/prices (not market_prices)
-            # symbol might need conversion if the API expects BTC/USD instead of BTC-USD
-            api_symbol = symbol.replace("-", "/") 
+            # Ensure market cache is populated so we can map name -> address
+            if not self._market_cache:
+                self.get_markets()
+            
+            market_config = self._market_cache.get(symbol, {})
+            market_addr = market_config.get("market_addr", "")
+            
+            params = {}
+            if market_addr:
+                params["market"] = market_addr
+            # If no address found, fetch all and search by name
+            
             resp = requests.get(
                 f"{DECIBEL_REST_BASE}/api/v1/prices",
                 headers=self._headers(),
-                params={"market": api_symbol},
+                params=params,
                 timeout=5,
             )
             if resp.status_code == 200:
                 data = resp.json()
-                # data is likely a list: [{"mark_price": "...", "market_addr": "..."}]
-                if isinstance(data, list) and len(data) > 0:
-                    item = data[0]
-                    return float(item.get("mark_price", 0))
-                elif isinstance(data, dict):
-                    return float(data.get("mark_price", 0))
+                if isinstance(data, list):
+                    if market_addr:
+                        # Filtered response — just take the first
+                        if len(data) > 0:
+                            return float(data[0].get("mark_px", 0))
+                    else:
+                        # All prices returned — match by market address from cache
+                        # Build reverse lookup: addr -> price
+                        for item in data:
+                            item_addr = item.get("market", "")
+                            # Check if this address matches any cached market with our symbol
+                            for name, cfg in self._market_cache.items():
+                                if cfg.get("market_addr") == item_addr and name == symbol:
+                                    return float(item.get("mark_px", 0))
+            else:
+                logger.error(f"Decibel prices HTTP {resp.status_code}: {resp.text[:200]}")
         except Exception as e:
             logger.error(f"Decibel get_price error for {symbol}: {e}")
         return 0.0
