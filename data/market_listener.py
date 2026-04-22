@@ -205,143 +205,8 @@ class MarketListener:
                 
                 await asyncio.sleep(POLL_INTERVAL_SEC) # Poll every X seconds
                 
-        async def monitor_positions():
-            """Polls for changes in active positions (e.g. manual UI trades).
-            When a new position is detected that wasn't opened by the bot,
-            auto-dispatches copy trades to Decibel/CoinDCX."""
-            from trading.lighter_client import lighter_wrapper
-            from utils.config import LIGHTER_ACCOUNT_INDEX
-            import lighter
-            
-            account_api = lighter.AccountApi(lighter_wrapper.api_client)
-            last_positions = None
-            
-            while self._running:
-                try:
-                    resp = await account_api.account(by="index", value=str(LIGHTER_ACCOUNT_INDEX))
-                    if resp.accounts:
-                        account = resp.accounts[0]
-                        current_positions = {}
-                        position_details = {}
-                        for pos in (account.positions or []):
-                            size = float(pos.position)
-                            if size != 0:
-                                current_positions[pos.symbol] = size
-                                position_details[pos.symbol] = {
-                                    "entry": float(pos.avg_entry_price),
-                                    "size": size,
-                                    "market_id": pos.market_id,
-                                }
-                        
-                        # Compare with last_positions (ignore very first load)
-                        if last_positions is not None:
-                            for symbol, size in current_positions.items():
-                                last_size = last_positions.get(symbol, 0)
-                                if size != last_size:
-                                    diff = size - last_size
-                                    # Identify direction: if size magnitude increased
-                                    if abs(size) > abs(last_size):
-                                        action = "🟢 INCREASED LONG" if diff > 0 else "🔴 INCREASED SHORT"
-                                        is_new_position = (last_size == 0)
-                                        if is_new_position:
-                                            action = "🟢 OPENED LONG" if diff > 0 else "🔴 OPENED SHORT"
-                                            
-                                        # We will send the Telegram message after we fetch TP/SL details.
-                                        # Auto-copy new positions to other exchanges
-                                        # Only copy if this looks like a UI trade (not bot-executed)
-                                        # Normalize symbol for comparison with _bot_executed_markets
-                                        normalized_symbol = symbol.upper().replace("USDC", "").replace("USDT", "").replace(" PERP", "").replace("-", "").strip()
-                                        if is_new_position and normalized_symbol not in self._bot_executed_markets:
-                                            try:
-                                                from trading.copy_manager import dispatch_copy_trade_from_position
-                                                side = "LONG" if diff > 0 else "SHORT"
-                                                details = position_details.get(symbol, {})
-                                                entry = details.get("entry", 0)
-                                                market_id = details.get("market_id")
-                                                
-                                                # NEW: Poll for active orders to find TP/SL for this UI trade
-                                                tp_pips = 0
-                                                sl_pips = 0
-                                                tp_price = 0
-                                                sl_price = 0
-                                                try:
-                                                    if market_id is not None:
-                                                        from lighter.api.order_api import OrderApi
-                                                        order_api = OrderApi(lighter_wrapper.api_client)
-                                                        auth_token = lighter_wrapper.get_auth_token()
-                                                        orders_resp = await order_api.account_active_orders_without_preload_content(
-                                                            account_index=LIGHTER_ACCOUNT_INDEX, market_id=market_id, auth=auth_token
-                                                        )
-                                                        orders_data = await orders_resp.json()
-                                                        mkt_orders = [o for o in orders_data.get("orders", []) if o.get("market_id") == market_id]
-                                                    
-                                                        tp_price, sl_price = detect_tp_sl_from_orders(mkt_orders, (side == "LONG"))
-                                                        if tp_price > 0 and entry > 0:
-                                                            tp_pips = abs(tp_price - entry)
-                                                        if sl_price > 0 and entry > 0:
-                                                            sl_pips = abs(sl_price - entry)
-                                                            
-                                                        if tp_pips > 0 or sl_pips > 0:
-                                                            logger.info(f"Detected TP/SL for UI trade {symbol}: TP pips={tp_pips:.1f}, SL pips={sl_pips:.1f}")
-                                                except Exception as e:
-                                                    logger.warning(f"Failed to fetch TP/SL orders for UI trade Sync: {e}")
-
-                                                # Build comprehensive message "with all details"
-                                                msg = (
-                                                    f"🛰️ *UI TRADE DETECTED*\n"
-                                                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                                                    f"📍 Asset  : `{symbol}`\n"
-                                                    f"📈 Action : *{action}*\n"
-                                                    f"├ Entry: `${entry:,.2f}`\n"
-                                                    f"├ Size : `{size}`\n"
-                                                )
-                                                if tp_price > 0:
-                                                    msg += f"├ 🎯 TP: `${tp_price:,.2f}` ({tp_pips:,.0f}p)\n"
-                                                if sl_price > 0:
-                                                    msg += f"├ 🛑 SL: `${sl_price:,.2f}` ({sl_pips:,.0f}p)\n"
-                                                msg += f"└ 🔗 *Syncing to Copy Bots...*"
-                                                
-                                                # Notify via Telegram
-                                                if self.bot_handler:
-                                                    await self.bot_handler.send_message(msg)
-                                                else:
-                                                    logger.warning("No bot_handler set for position update notification.")
-
-                                                if entry > 0:
-                                                    asyncio.create_task(
-                                                        dispatch_copy_trade_from_position(symbol, side, abs(size), entry, tp_pips=tp_pips, sl_pips=sl_pips)
-                                                    )
-                                            except Exception as e:
-                                                logger.warning(f"Auto-copy dispatch error: {e}")
-                                        
-                                        else:
-                                            # If not new position (just size change), send basic message
-                                            msg = (
-                                                f"🛰️ *UI TRADE UPDATE*\n"
-                                                f"━━━━━━━━━━━━━━━━━━━━\n"
-                                                f"📍 Asset  : `{symbol}`\n"
-                                                f"📈 Action : *{action}*\n"
-                                                f"📊 Size   : `{size}`"
-                                            )
-                                            if hasattr(self, 'bot_handler') and self.bot_handler:
-                                                await self.bot_handler.send_message(msg)
-                                            elif hasattr(self, 'price_alerts') and self.price_alerts:
-                                                await self.price_alerts[0]["bot"].send_message(msg)
-                                                
-                                        # Clear the bot-executed marker after detection
-                                        if hasattr(self, '_bot_executed_markets'):
-                                            self._bot_executed_markets.discard(normalized_symbol)
-                        
-                        last_positions = current_positions
-                        
-                except Exception as e:
-                    logger.debug(f"Position monitor error: {e}")
-                
-                await asyncio.sleep(POLL_INTERVAL_SEC)
-                
         cleanup_task = asyncio.create_task(cleanup_expired())
         monitor_task = asyncio.create_task(monitor_orders())
-        position_task = asyncio.create_task(monitor_positions())
         
         while self._running:
             try:
@@ -456,7 +321,7 @@ class MarketListener:
                     await asyncio.sleep(5)
         
         cleanup_task.cancel()
-        position_task.cancel()
+        monitor_task.cancel()
 
     def stop(self):
         self._running = False

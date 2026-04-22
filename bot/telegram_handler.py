@@ -84,16 +84,22 @@ class TelegramBotHandler:
         return InlineKeyboardMarkup(keyboard)
 
     def _get_settings_keyboard(self):
-        from trading.copy_manager import copy_config
-        decibel_status = "🟢 ON" if copy_config.decibel_enabled else "🔴 OFF"
-        coindcx_status = "🟢 ON" if copy_config.coindcx_enabled else "🔴 OFF"
+        from core.config_manager import config_manager
+        pacifica_status = "🟢 ON" if config_manager.pacifica_enabled else "🔴 OFF"
+        decibel_status = "🟢 ON" if config_manager.decibel_enabled else "🔴 OFF"
         
         keyboard = [
             [
+                InlineKeyboardButton(f"Pacifica: {pacifica_status}", callback_data='toggle_pacifica'),
                 InlineKeyboardButton(f"Decibel: {decibel_status}", callback_data='toggle_decibel'),
             ],
             [
-                InlineKeyboardButton(f"CoinDCX: {coindcx_status}", callback_data='toggle_coindcx'),
+                InlineKeyboardButton(f"P.Lev: {config_manager.pacifica_leverage}x", callback_data='set_lev'),
+                InlineKeyboardButton(f"P.Loss: ${config_manager.pacifica_max_loss_usd}", callback_data='set_maxloss'),
+            ],
+            [
+                InlineKeyboardButton(f"D.Lev: {config_manager.decibel_leverage}x", callback_data='set_dlev'),
+                InlineKeyboardButton(f"D.Loss: ${config_manager.decibel_max_loss_usd}", callback_data='set_dmaxloss'),
             ],
             [
                 InlineKeyboardButton("🏠 Main Menu", callback_data='menu'),
@@ -464,16 +470,18 @@ class TelegramBotHandler:
             await self._show_alerts(query)
         elif data == 'settings':
             await self._settings_command(query, context)
+        elif data == 'toggle_pacifica':
+            from core.config_manager import config_manager
+            new_state = config_manager.toggle_pacifica()
+            await query.answer(f"Pacifica Copy: {'ENABLED' if new_state else 'DISABLED'}")
+            await query.edit_message_reply_markup(reply_markup=self._get_settings_keyboard())
         elif data == 'toggle_decibel':
-            from trading.copy_manager import copy_config
-            new_state = copy_config.toggle_decibel()
+            from core.config_manager import config_manager
+            new_state = config_manager.toggle_decibel()
             await query.answer(f"Decibel Copy: {'ENABLED' if new_state else 'DISABLED'}")
             await query.edit_message_reply_markup(reply_markup=self._get_settings_keyboard())
-        elif data == 'toggle_coindcx':
-            from trading.copy_manager import copy_config
-            new_state = copy_config.toggle_coindcx()
-            await query.answer(f"CoinDCX Copy: {'ENABLED' if new_state else 'DISABLED'}")
-            await query.edit_message_reply_markup(reply_markup=self._get_settings_keyboard())
+        elif data in ('set_lev', 'set_maxloss', 'set_dlev', 'set_dmaxloss'):
+            await query.answer("Edit these manually in config or via future command update", show_alert=True)
         elif data == 'menu':
             await query.edit_message_text("📱 *Main Menu*", parse_mode='Markdown', reply_markup=self._get_main_menu_keyboard())
         elif data.startswith('refresh_pos_'):

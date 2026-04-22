@@ -13,7 +13,6 @@ LIGHTER_PRIVATE_KEY = os.getenv("LIGHTER_PRIVATE_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 # Security: List of allowed Telegram User IDs (e.g. "123456,789012")
-# From logs, your ID is: 1060740758
 ALLOWED_TELEGRAM_USER_IDS = [
     int(x.strip()) for x in os.getenv("ALLOWED_TELEGRAM_USER_IDS", "").split(",") if x.strip()
 ]
@@ -34,14 +33,11 @@ def validate_config():
     if missing:
         raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
 
-# --- Copy Trading ---
-COINDCX_KEY = os.getenv("COINDCX_KEY")
-COINDCX_SECRET = os.getenv("COINDCX_SECRET")
-COINDCX_LEVERAGE = int(os.getenv("COINDCX_LEVERAGE", 1))
-COINDCX_ALLOCATION_INR = float(os.getenv("COINDCX_ALLOCATION_INR", 0.0))
+# --- Copy Trading (Pacifica) ---
+PACIFICA_API_KEY = os.getenv("PACIFICA_API_KEY")
+PACIFICA_SUBACCOUNT = os.getenv("PACIFICA_SUBACCOUNT")
 
+# --- Copy Trading (Decibel) ---
 DECIBEL_PRIVATE_KEY = os.getenv("DECIBEL_PRIVATE_KEY")
-DECIBEL_API_KEY = os.getenv("DECIBEL_API_KEY")
-DECIBEL_RPC_URL = os.getenv("DECIBEL_RPC_URL", "https://fullnode.mainnet.aptoslabs.com")
-DECIBEL_LEVERAGE = int(os.getenv("DECIBEL_LEVERAGE", 1))
-DECIBEL_ALLOCATION_USDC = float(os.getenv("DECIBEL_ALLOCATION_USDC", 0.0))
+DECIBEL_NODE_API_KEY = os.getenv("DECIBEL_NODE_API_KEY")
+DECIBEL_SUBACCOUNT = os.getenv("DECIBEL_SUBACCOUNT")

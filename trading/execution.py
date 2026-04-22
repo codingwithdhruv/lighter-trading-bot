@@ -63,15 +63,9 @@ async def execute_trade(signal: TradeSignal, trigger_price: float = None) -> boo
         
         if entry_for_pips > 0:
             _resolve_pip_tp_sl(signal, entry_for_pips)
-            
-        # 5. Dispatch Copy Trades Asynchronously
-        import asyncio
-        from trading.copy_manager import dispatch_copy_trade
-        # Copy trades should use the Bybit trigger as the benchmark for entry if available
-        asyncio.create_task(dispatch_copy_trade(signal, trigger_price or entry_for_pips))
         
-        # 6. Place TP/SL if both are set
-        if getattr(signal, 'tp', 0) > 0 and getattr(signal, 'sl', 0) > 0:
+        # 6. Place TP/SL if provided
+        if getattr(signal, 'tp', 0) > 0 or getattr(signal, 'sl', 0) > 0:
             tp_sl_success = await place_tp_sl_orders(signal, is_ask, client_order_index)
             if not tp_sl_success:
                 logger.warning("Market order placed, but failed to set TP/SL. Manual intervention might be needed.")

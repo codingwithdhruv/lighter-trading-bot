@@ -9,6 +9,7 @@ from data.market_listener import MarketListener
 from trading.lighter_client import lighter_wrapper
 from trading.execution import execute_trade
 from trading.market_config import market_registry
+from lighter_listener.position_tracker import lighter_position_tracker
 
 class BotApplication:
     def __init__(self):
@@ -63,7 +64,9 @@ class BotApplication:
         await self.telegram_bot.send_message(alert_msg)
         
         # Mark BEFORE execution to prevent position monitor from auto-copying
-        self.market_listener.mark_as_bot_executed(signal.asset)
+        if hasattr(self.market_listener, 'mark_as_bot_executed'):
+            self.market_listener.mark_as_bot_executed(signal.asset)
+        lighter_position_tracker.mark_as_bot_executed(signal.asset)
         
         success = await execute_trade(signal, trigger_price=trigger_price)
         
@@ -88,6 +91,9 @@ class BotApplication:
             logger.info("Bot is active and running.")
             await self.telegram_bot.send_message("✅ Bot System Online.")
 
+            # Start real-time Lighter UI tradeoff listener
+            await lighter_position_tracker.start()
+
             # Start monitoring prices (blocks forever)
             await self.market_listener.start()
         except KeyboardInterrupt:
@@ -101,6 +107,7 @@ class BotApplication:
             await self.telegram_bot.stop()
         if self.market_listener:
             self.market_listener.stop()
+        await lighter_position_tracker.stop()
         await lighter_wrapper.close()
 
 
