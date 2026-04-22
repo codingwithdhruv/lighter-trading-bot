@@ -2,7 +2,7 @@ import asyncio
 import json
 import time
 from typing import Callable, Awaitable
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, ReplyKeyboardMarkup, KeyboardButton
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
     Application, 
     CommandHandler, 
@@ -74,7 +74,6 @@ class TelegramBotHandler:
                 InlineKeyboardButton("⚙️ Terminal Settings", callback_data="settings")
             ],
             [
-                InlineKeyboardButton("🚀 Launch Web HUD", web_app=WebAppInfo("https://app.lighter.xyz")),
                 InlineKeyboardButton("🚨 EMERGENCY STOP", callback_data="stop_all")
             ]
         ])
@@ -460,19 +459,13 @@ class TelegramBotHandler:
 
         # 2. Pacifica
         try:
-            pacifica_equity = pacifica_client.get_subaccount_balance()
-            shares['Pacifica'] = pacifica_equity
-            text += f"🔹 *Pacifica:* `${pacifica_equity:,.2f}`\n"
-        except Exception as e:
-            text += f"🔹 *Pacifica:* `Error`\n"
+            shares['Pacifica'] = pacifica_client.get_subaccount_balance()
+        except: shares['Pacifica'] = 0.0
 
         # 3. Decibel
         try:
-            decibel_equity = decibel_client.get_account_balance()
-            shares['Decibel'] = decibel_equity
-            text += f"🔹 *Decibel:* `${decibel_equity:,.2f}`\n"
-        except Exception as e:
-            text += f"🔹 *Decibel:* `Error`\n"
+            shares['Decibel'] = decibel_client.get_account_balance()
+        except: shares['Decibel'] = 0.0
 
         total_portfolio_usd = sum(shares.values())
         for exchange, bal in shares.items():

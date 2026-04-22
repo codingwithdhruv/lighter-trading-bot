@@ -44,7 +44,7 @@ class PacificaExecutionEngine:
             "symbol": symbol.upper(),
             "amount": formatted_size,
             "side": pacifica_side,
-            "slippage_percent": "0.5",  # Fixed slippage to prevent trap execution
+            "slippage_percent": 0.5,  # Numeric value as per docs
             "reduce_only": False,
             "client_order_id": client_order_id
         }
@@ -90,13 +90,13 @@ class PacificaExecutionEngine:
         if sl_pips > 0:
             operation_data["stop_loss"] = {
                 "stop_price": f"{sl_price:.2f}",
-                "client_order_id": str(uuid.uuid4())
+                "limit_price": f"{(sl_price * (0.999 if side.upper() == 'LONG' else 1.001)):.2f}"
             }
             
         if tp_pips > 0:
             operation_data["take_profit"] = {
                 "stop_price": f"{tp_price:.2f}",
-                "client_order_id": str(uuid.uuid4())
+                "limit_price": f"{(tp_price * (0.995 if side.upper() == 'LONG' else 1.005)):.2f}"
             }
 
         signed_payload = self.client.sign_payload("set_position_tpsl", operation_data)

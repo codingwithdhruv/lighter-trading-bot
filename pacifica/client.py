@@ -100,6 +100,28 @@ class PacificaClient:
         return 0.0
 
     def get_subaccount_balance(self) -> float:
+        """
+        Fetches the total equity (balance + uPnL) for the configured account.
+        Tries the public account info endpoint first, falls back to subaccount list.
+        """
+        if not self.public_key_b58:
+            return 0.0
+            
+        target = self.account if self.account else self.public_key_b58
+        
+        # 1. Try public account info endpoint (provides account_equity)
+        try:
+            resp = requests.get(f"{PACIFICA_REST_URL}/api/v1/account?account={target}", timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("success"):
+                    equity = data.get("data", {}).get("account_equity")
+                    if equity is not None:
+                        return float(equity)
+        except Exception as e:
+            logger.debug(f"Pacifica Account Info Fallback: {e}")
+
+        # 2. Fallback to signed subaccount list if Agent Key is available
         if not self.signing_key:
             return 0.0
             
@@ -117,10 +139,8 @@ class PacificaClient:
                             return float(sub.get("balance", "0"))
                     if subs:
                         return float(subs[0].get("balance", "0"))
-            else:
-                logger.error(f"Failed to fetch Pacifica subaccounts: {resp.text}")
         except Exception as e:
-            logger.error(f"Error fetching Pacifica subaccounts: {e}")
+            logger.error(f"Error fetching Pacifica subaccounts fallback: {e}")
         return 0.0
 
 pacifica_client = PacificaClient()
