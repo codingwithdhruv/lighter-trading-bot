@@ -39,9 +39,12 @@ class TelegramBotHandler:
         self.app.add_handler(CommandHandler("closingalert", self._auth_wrapper(self._closing_alert_command)))
         self.app.add_handler(CommandHandler("tp", self._auth_wrapper(self._tp_command)))
         self.app.add_handler(CommandHandler("sl", self._auth_wrapper(self._sl_command)))
+        self.app.add_handler(CommandHandler("positions", self._auth_wrapper(self._positions_command)))
         self.app.add_handler(CommandHandler("cancel_tp", self._auth_wrapper(self._cancel_tp_command)))
         self.app.add_handler(CommandHandler("cancel_sl", self._auth_wrapper(self._cancel_sl_command)))
         self.app.add_handler(CommandHandler("close", self._auth_wrapper(self._close_command)))
+        self.app.add_handler(CommandHandler("stopall", self._auth_wrapper(self._stop_all_command)))
+        self.app.add_handler(CommandHandler("stop_all", self._auth_wrapper(self._stop_all_command)))
         self.app.add_handler(CallbackQueryHandler(self._auth_wrapper(self._button_callback)))
         self.app.add_handler(CommandHandler("settings", self._auth_wrapper(self._settings_command)))
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._auth_wrapper(self._handle_message)))
@@ -60,28 +63,21 @@ class TelegramBotHandler:
         return wrapped
 
     def _get_main_menu_keyboard(self):
-        keyboard = [
+        """Main dashboard inline buttons"""
+        return InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("📸 LONG", callback_data='tpl_long'),
-                InlineKeyboardButton("📉 SHORT", callback_data='tpl_short'),
+                InlineKeyboardButton("💼 Portfolio Dashboard", callback_data="balance"),
+                InlineKeyboardButton("🛰️ Position HUD", callback_data="positions")
             ],
             [
-                InlineKeyboardButton("📈 Positions", callback_data='positions'),
-                InlineKeyboardButton("💰 Balance", callback_data='balance'),
+                InlineKeyboardButton("🔔 Active Alerts", callback_data="alerts_list"),
+                InlineKeyboardButton("⚙️ Terminal Settings", callback_data="settings")
             ],
             [
-                InlineKeyboardButton("📜 History", callback_data='trade_history'),
-                InlineKeyboardButton("🔔 Alerts", callback_data='alerts_list'),
-            ],
-            [
-                InlineKeyboardButton("📊 Status", callback_data='status'),
-                InlineKeyboardButton("⚙️ Settings", callback_data='settings'),
-            ],
-            [
-                InlineKeyboardButton("🛑 Stop All", callback_data='stop_all'),
-            ],
-        ]
-        return InlineKeyboardMarkup(keyboard)
+                InlineKeyboardButton("🚀 Launch Web HUD", web_app=WebAppInfo("https://app.lighter.xyz")),
+                InlineKeyboardButton("🚨 EMERGENCY STOP", callback_data="stop_all")
+            ]
+        ])
 
     def _get_settings_keyboard(self):
         from core.config_manager import config_manager
@@ -406,43 +402,96 @@ class TelegramBotHandler:
             await update.message.reply_text("⚠️ System not ready.", parse_mode='Markdown')
 
     async def _closing_alert_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """/closingalert above/below <price> <optional message> — 5m candle close alert"""
+        """/closingalert <price> <optional message> — 5m candle close alert"""
         args = context.args
-        if not args or len(args) < 2:
+        if not args:
             await update.message.reply_text(
                 "🔔 *Closing Alert Usage:*\n"
-                "`/closingalert above 87000 breakout confirmed`\n"
-                "`/closingalert below 85000 support lost`",
+                "`/closingalert 87000 breakout confirmed`\n"
+                "_(Auto-detects above/below)_",
                 parse_mode='Markdown'
             )
             return
         
-        direction = args[0].lower()
-        if direction not in ("above", "below"):
-            await update.message.reply_text("❌ Use `above` or `below`.", parse_mode='Markdown')
-            return
-        
         try:
-            price = float(args[1])
+            price = float(args[0])
         except ValueError:
             await update.message.reply_text("❌ Invalid price.", parse_mode='Markdown')
             return
         
-        custom_msg = " ".join(args[2:]) if len(args) > 2 else ""
+        custom_msg = " ".join(args[1:]) if len(args) > 1 else ""
         
         if self.app_context and self.app_context.market_listener:
+            # direction=None triggers auto-detection in MarketListener
             self.app_context.market_listener.add_price_alert(
-                price, custom_msg, self, alert_type="closing", direction=direction
+                price, custom_msg, self, alert_type="closing", direction=None
             )
+            # Fetch direction for confirmation message
+            direction = "above" if price > self.app_context.market_listener._last_btc_price else "below"
+            
             await update.message.reply_text(
                 f"✅ *Closing Alert Set*\n"
-                f"📍 BTC close {direction} `${price:,.2f}`\n"
-                f"💬 {custom_msg or 'No message'}",
+                f"├ Type: 5m Candle Close\n"
+                f"├ Direction: {direction.upper()}\n"
+                f"├ Target: `${price:,.2f}`\n"
+                f"└ Msg: {custom_msg or '—'}",
                 parse_mode='Markdown',
                 reply_markup=self._get_main_menu_keyboard()
             )
         else:
             await update.message.reply_text("⚠️ System not ready.", parse_mode='Markdown')
+
+    # =========================================================================
+    #  BALANCE / PORTFOLIO
+    # =========================================================================
+    async def _show_balance(self, update_or_query):
+        from trading.lighter_client import lighter_wrapper
+        from utils.config import LIGHTER_ACCOUNT_INDEX
+        from pacifica.client import pacifica_client
+        from decibel.client import decibel_client
+        
+        text = "💼 *PORTFOLIO AGGREGATOR*\n━━━━━━━━━━━━━━━━━━━━\n"
+        shares = {}
+        try:
+            account_api = lighter.AccountApi(lighter_wrapper.api_client)
+            acc_info = await account_api.account(by="index", value=str(LIGHTER_ACCOUNT_INDEX))
+            shares['Lighter'] = float(acc_info.accounts[0].total_asset_value) if acc_info.accounts else 0.0
+        except: shares['Lighter'] = 0.0
+
+        # 2. Pacifica
+        try:
+            pacifica_equity = pacifica_client.get_subaccount_balance()
+            shares['Pacifica'] = pacifica_equity
+            text += f"🔹 *Pacifica:* `${pacifica_equity:,.2f}`\n"
+        except Exception as e:
+            text += f"🔹 *Pacifica:* `Error`\n"
+
+        # 3. Decibel
+        try:
+            decibel_equity = decibel_client.get_account_balance()
+            shares['Decibel'] = decibel_equity
+            text += f"🔹 *Decibel:* `${decibel_equity:,.2f}`\n"
+        except Exception as e:
+            text += f"🔹 *Decibel:* `Error`\n"
+
+        total_portfolio_usd = sum(shares.values())
+        for exchange, bal in shares.items():
+            pct = (bal / total_portfolio_usd * 100) if total_portfolio_usd > 0 else 0
+            bar_len = 10
+            filled = int(pct / 10)
+            bar = "■" * filled + "□" * (bar_len - filled)
+            text += f"🔹 *{exchange}:* `${bal:,.2f}`\n`{bar}` {pct:.1f}%\n"
+
+        text += "━━━━━━━━━━━━━━━━━━━━\n"
+        text += f"💰 *NET WORTH:* `${total_portfolio_usd:,.2f}`\n"
+        
+        # Add refresh button
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔄 Refresh Dashboard", callback_data="balance"),
+            InlineKeyboardButton("🏠 Main Menu", callback_data="menu")
+        ]])
+        
+        await self._reply(update_or_query, text, reply_markup=keyboard)
 
     # =========================================================================
     #  BUTTON CALLBACK
@@ -492,6 +541,11 @@ class TelegramBotHandler:
         elif data == 'set_dmaxloss':
             context.user_data['pending_setting'] = 'decibel_max_loss'
             await query.message.reply_text("💰 Enter new *Decibel Max Loss USD* (e.g., 50):", parse_mode='Markdown')
+        elif data == 'cancel_all_alerts':
+            if self.app_context and self.app_context.market_listener:
+                self.app_context.market_listener.clear_price_alerts()
+                await query.answer("All alerts cleared.")
+                await self._show_alerts(query)
         elif data == 'menu':
             await query.edit_message_text("📱 *Main Menu*", parse_mode='Markdown', reply_markup=self._get_main_menu_keyboard())
         elif data.startswith('refresh_pos_'):
@@ -517,143 +571,97 @@ class TelegramBotHandler:
     #  CORE COMMANDS
     # =========================================================================
     async def _start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/start command - Professional onboarding"""
         self.chat_id = update.effective_chat.id
         logger.info(f"Telegram bot started by chat_id: {self.chat_id}")
+
+        # Path to the generated hero image
+        hero_image_path = "/Users/dhruv/.gemini/antigravity/brain/6f8ffb2c-9192-4db1-9f48-3ca95d869e11/bot_hero_header_1776843368221.png"
         
         welcome_text = (
-            "🚀 *Lighter Trading Bot* 🚀\n\n"
-            "*Signal:* Paste a trade signal\n"
-            "*Commands:*\n"
-            "`/long` `/short` — Templates\n"
-            "`/tp 71000` — Set take profit\n"
-            "`/sl 69000` — Set stop loss\n"
-            "`/close` — Close position\n"
-            "`/alert 87000` — Price alert\n"
-            "`/balance` — Account info\n"
-            "`/help` — Full guide"
-        )
-        await update.message.reply_text(
-            welcome_text, 
-            reply_markup=self._get_main_menu_keyboard(),
-            parse_mode='Markdown'
+            "🛸 *LIGHTER PRO TERMINAL V2.0*\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Welcome, Commander. System initialized.\n\n"
+            "⚡ *Status:* Online & Synchronized\n"
+            "🛰️ *Markets:* BTC-USDC (Lighter, Pacifica, Decibel)\n"
+            "🛡️ *Security:* Ed25519 Encrypted\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Use the menu below to navigate your empire."
         )
 
+        try:
+            with open(hero_image_path, 'rb') as photo:
+                await update.message.reply_photo(
+                    photo=photo,
+                    caption=welcome_text,
+                    parse_mode='Markdown',
+                    reply_markup=self._get_persistent_menu()
+                )
+            # Also show the inline menu
+            await update.message.reply_text(
+                "📡 *Command Center Select:*",
+                reply_markup=self._get_main_menu_keyboard(),
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            logger.error(f"Failed to send hero image: {e}")
+            await update.message.reply_text(
+                welcome_text,
+                parse_mode='Markdown',
+                reply_markup=self._get_main_menu_keyboard()
+            )
+
     async def _help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show pro help menu"""
         help_text = (
-            "📖 *Trading Bot Guide*\n\n"
-            "*📝 Signal Format:*\n"
-            "`BTC > 70000`\n"
-            "`SIDE: LONG`\n"
-            "`SIZE: 2`\n"
-            "`LEV: 40`\n"
-            "`TP: 71000` or `TP: 500p`\n"
-            "`SL: 69500` or `SL: 250p`\n\n"
-            "*🎯 Position Management:*\n"
-            "`/tp 71000` — Set TP (price)\n"
-            "`/tp 500p` — Set TP (pips from entry)\n"
-            "`/sl 69000` — Set SL (price)\n"
-            "`/sl 250p` — Set SL (pips from entry)\n"
-            "`/close` — Market close BTC\n"
-            "`/close ETH` — Market close ETH\n\n"
-            "*🔔 Alerts:*\n"
-            "`/alert 87000 msg` — Price crossing\n"
-            "`/closingalert above 87000` — Candle close\n\n"
-            "*📊 Info:*\n"
-            "`/balance` `/status` `/long` `/short`\n\n"
-            "*💡 Pips:* `250p` = 250 price points\n"
-            "LONG: TP = entry+250, SL = entry-250\n"
-            "SHORT: TP = entry-250, SL = entry+250"
+            "📖 *COMMAND REFERENCE*\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "📈 *Trading Commands*\n"
+            "├ `/long` — Get Long template\n"
+            "├ `/short` — Get Short template\n"
+            "└ `/close <asset>` — Close on Lighter\n\n"
+            "🔔 *Alert Commands*\n"
+            "├ `/alert <price>` — Instant alert\n"
+            "└ `/closingalert <price>` — 5m Candle close\n\n"
+            "⚙️ *Control*\n"
+            "├ `/balance` — Unified Portfolio\n"
+            "├ `/positions` — Position HUD\n"
+            "└ `/settings` — Exchange Toggles\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🛡️ *Emergency:* `/stopall`"
         )
-        await update.message.reply_text(help_text, parse_mode='Markdown')
+        await update.message.reply_text(
+            help_text, 
+            parse_mode='Markdown',
+            reply_markup=self._get_main_menu_keyboard()
+        )
+
+    def _get_persistent_menu(self):
+        """Permanent bottom menu for quick access"""
+        from telegram import ReplyKeyboardMarkup, KeyboardButton
+        keyboard = [
+            [KeyboardButton("💼 Portfolio"), KeyboardButton("🛰️ Positions")],
+            [KeyboardButton("⚙️ Settings"), KeyboardButton("❓ Help")]
+        ]
+        return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, persistent=True)
 
     async def _status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await self._show_status(update)
 
     async def _settings_command(self, update_or_query, context=None):
         text = (
-            "⚙️ *Copy Trading Settings*\n"
+            "⚙️ *Copy Trading Engine Settings*\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "Toggle copy trading for each exchange below. Settings are saved automatically."
+            "Configure mirroring parameters for Pacifica and Decibel."
         )
         await self._reply(update_or_query, text, reply_markup=self._get_settings_keyboard())
 
     async def _balance_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await self._show_balance(update)
 
-    # =========================================================================
-    #  HELPER: Get Position Info
-    # =========================================================================
-    async def _get_position_info(self, asset: str) -> dict:
-        """Fetch current position info for an asset from Lighter."""
-        from trading.lighter_client import lighter_wrapper
-        from utils.config import LIGHTER_ACCOUNT_INDEX
-        
-        try:
-            account_api = lighter.AccountApi(lighter_wrapper.api_client)
-            acc_info = await account_api.account(by="index", value=str(LIGHTER_ACCOUNT_INDEX))
-            
-            if not acc_info.accounts:
-                return None
-            
-            account = acc_info.accounts[0]
-            for pos in (account.positions or []):
-                pos_size = float(pos.position)
-                if pos_size == 0:
-                    continue
-                if pos.symbol.upper().startswith(asset.upper()):
-                    entry = float(pos.avg_entry_price)
-                    margin = float(pos.allocated_margin)
-                    imf = float(pos.initial_margin_fraction)
-                    leverage = round(100.0 / imf, 1) if imf > 0 else 0
-                    return {
-                        'size': pos_size,
-                        'entry': entry,
-                        'margin': margin,
-                        'leverage': leverage,
-                        'unrealized_pnl': float(pos.unrealized_pnl),
-                        'symbol': pos.symbol,
-                        'market_id': pos.market_id,
-                    }
-            return None
-        except Exception as e:
-            logger.error(f"Error fetching position info: {e}")
-            return None
+    async def _positions_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await self._show_positions(update)
 
-    # =========================================================================
-    #  BALANCE
-    # =========================================================================
-    async def _show_balance(self, update_or_query):
-        from trading.lighter_client import lighter_wrapper
-        from utils.config import LIGHTER_ACCOUNT_INDEX
-        text = "💰 *Account Balance*\n━━━━━━━━━━━━━━━━━━\n"
-        try:
-            account_api = lighter.AccountApi(lighter_wrapper.api_client)
-            acc_info = await account_api.account(by="index", value=str(LIGHTER_ACCOUNT_INDEX))
-            if acc_info.accounts:
-                account = acc_info.accounts[0]
-                usdc_val = 0.0
-                for asset in (account.assets or []):
-                    if asset.symbol == 'USDC':
-                        usdc_val = float(asset.balance) - float(asset.locked_balance)
-                        break
-                
-                usdc_in_positions = sum(float(p.allocated_margin) for p in (account.positions or []))
-                collateral = float(account.collateral)
-                total_val = float(account.total_asset_value)
-                
-                text += f"💵 USDC Available: `${usdc_val:,.2f}`\n"
-                text += f"💰 USDC in Positions: `${usdc_in_positions:,.2f}`\n"
-                text += f"🏦 Collateral: `${collateral:,.2f}`\n"
-                text += f"📊 Total Equity: `${total_val:,.2f}`\n"
-                
-                open_count = sum(1 for p in (account.positions or []) if float(p.position) != 0)
-                text += f"\n📈 Open Positions: `{open_count}`"
-            else:
-                text += "No account found."
-        except Exception as e:
-            text += f"Error: {self._escape_md(str(e))}"
-
-        await self._reply(update_or_query, text)
 
     # =========================================================================
     #  POSITIONS (with dynamic PnL estimation)
@@ -881,30 +889,33 @@ class TelegramBotHandler:
     #  ALERTS LIST
     # =========================================================================
     async def _show_alerts(self, update_or_query):
-        text = "🔔 *Active Alerts*\n━━━━━━━━━━━━━━━━━━\n"
-        text += "`/alert 87000 msg` — crossing\n"
-        text += "`/closingalert above 87000 msg` — candle close\n\n"
+        text = "🔔 *Active Price Alerts*\n━━━━━━━━━━━━━━━━━━━━\n"
         
         if self.app_context and self.app_context.market_listener:
             alerts = self.app_context.market_listener.get_price_alerts()
             if not alerts:
-                text += "No active alerts."
+                text += "_No active alerts._\n\n"
+                text += "Use `/alert <price>` or `/closingalert <price>` to set one."
             else:
                 for i, alert in enumerate(alerts):
                     atype = alert.get('alert_type', 'crossing')
                     direction = alert.get('direction', '?')
-                    msg = alert.get('message', '')
-                    if atype == "closing":
-                        text += f"{i+1}. Closing {direction} `${alert['price']:,.2f}`"
-                    else:
-                        text += f"{i+1}. Crossing `${alert['price']:,.2f}`"
-                    if msg:
-                        text += f" - {msg}"
+                    emoji = "🕯️" if atype == "closing" else "⚡"
+                    dir_emoji = "🔼" if direction == "above" else "🔽"
+                    
+                    text += f"{i+1}. {emoji} {dir_emoji} `${alert['price']:,.2f}`"
+                    if alert.get('message'):
+                        text += f" — _{alert['message']}_"
                     text += "\n"
         else:
-            text += "System not ready."
+            text += "⚠️ System not ready."
 
-        await self._reply(update_or_query, text)
+        keyboard = []
+        if self.app_context and self.app_context.market_listener and self.app_context.market_listener.get_price_alerts():
+            keyboard.append([InlineKeyboardButton("🗑 Cancel All Alerts", callback_data='cancel_all_alerts')])
+        keyboard.append([InlineKeyboardButton("🏠 Menu", callback_data='menu')])
+        
+        await self._reply(update_or_query, text, reply_markup=InlineKeyboardMarkup(keyboard))
 
     # =========================================================================
     #  STATUS / STOP
@@ -926,11 +937,15 @@ class TelegramBotHandler:
 
         await self._reply(update_or_query, text)
 
-    async def _stop_all(self, query):
+    async def _stop_all_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/stopall command - Emergency stop for all signals and alerts"""
+        await self._stop_all(update)
+
+    async def _stop_all(self, query_or_update):
         if self.app_context and self.app_context.market_listener:
             self.app_context.market_listener.clear_signals()
             self.app_context.market_listener.clear_price_alerts()
-            await self._reply(query, "🛑 Stopped all signals and alerts.")
+            await self._reply(query_or_update, "🛑 *EMERGENCY STOP:* All signals and alerts cleared.")
 
     # =========================================================================
     #  MESSAGE HANDLER
@@ -938,6 +953,16 @@ class TelegramBotHandler:
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = update.message.text.strip()
         
+        # 0. Check for Persistent Menu Buttons
+        menu_mapping = {
+            "💼 Portfolio": self._balance_command,
+            "🛰️ Positions": self._positions_command,
+            "⚙️ Settings": self._settings_command,
+            "❓ Help": self._help_command
+        }
+        if text in menu_mapping:
+            return await menu_mapping[text](update, context)
+
         # 1. Check for pending setting updates
         pending = context.user_data.get('pending_setting')
         if pending:

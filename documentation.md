@@ -1,77 +1,70 @@
-# Lighter Copy Trading Bot Documentation
+# Lighter Pro Terminal & Copy Trading Engine
 
-## Overview
-This bot is a high-performance, real-time trading engine designed to synchronize positions from the **Lighter** exchange (Orderbook DEX) to **Pacifica** and **Decibel** (Perpetual DEXes). It operates in two primary modes:
-1.  **Signal Mode**: Monitors Bybit SPOT 5-minute candle closes based on Telegram-input signals.
-2.  **UI Sync Mode**: Monitors the Lighter UI in real-time via WebSocket. Any trade placed manually on Lighter is instantly detected and mirrored to Pacifica and Decibel.
+## 1. Technical Overview
+The Lighter Trading Bot is a high-performance, asynchronous trading system designed to bridge the liquidity and ease-of-use of the **Lighter** orderbook DEX with the deep perpetual markets of **Pacifica** and **Decibel**.
 
-## Architecture
+It provides a unified command center via Telegram, enabling institutional-grade control over multiple DEXes from a single interface.
 
-### 1. Signal Detection & Parsing
-*   **Source**: Bybit SPOT WebSocket (`wss://stream.bybit.com/v5/public/spot`).
-*   **Logic**: Signals are parsed from Telegram (e.g., `BTC > 70000 LONG TP: 500p SL: 250p`). The bot waits for a **confirmed 5-minute candle close** on Bybit that meets the condition.
-*   **Slippage Protection**: If the candle close price is too far from the trigger price (defined by `MAX_TRIGGER_SLIPPAGE`), the signal is invalidated to prevent "trap" entries.
+---
 
-### 2. Lighter UI Tracking
-*   **Source**: Lighter Account WebSocket.
-*   **Logic**: The `PositionTracker` listens for `account_all_positions` updates.
-*   **TP/SL Discovery**: When a new position (or increase) is detected, the bot queries Lighter's active orders for that market to discover the **Take Profit** and **Stop Loss** distances in pips.
-*   **Infinite Loop Prevention**: Bot-executed trades are marked and ignored by the tracker to prevent them from being "re-copied" back into the system.
+## 2. Operational Modes
 
-### 3. Copy Engine Dispatch
-*   **Concurrency**: Uses `asyncio.gather` to dispatch signals to all enabled target exchanges simultaneously.
-*   **Zero-Default Policy**: No hardcoded default TP/SL pips are used. Signals only carry TP/SL if they were explicitly provided in the signal text or discovered on the Lighter UI.
+### 🚀 Mode A: Signal Execution (Bybit Sync)
+*   **Trigger**: User inputs a signal via Telegram (e.g., `BTC > 70000 LONG SIZE: 2`).
+*   **Monitoring**: The `MarketListener` connects to the Bybit SPOT WebSocket.
+*   **Execution Criteria**: The bot waits for a **confirmed 5-minute candle close** that satisfies the condition.
+*   **Slippage Guard**: If the close price deviates more than `MAX_TRIGGER_SLIPPAGE` from the target, the trade is aborted to prevent "trap" entries.
+*   **Execution Flow**: Once triggered, a market order is placed on Lighter, followed by automated TP/SL placement.
 
-### 4. Target Execution (Pacifica & Decibel)
-*   **Risk-Based Sizing**: Position size is calculated using the formula:
-    `Position Size = MAX_LOSS_USD / SL_PIPS`
-    This ensures that regardless of the entry price or leverage, the maximum loss if the SL is hit remains constant (e.g., ~$20).
-*   **Leverage**: Each exchange has its own leverage setting (e.g., 40x).
-*   **TP/SL Application**: TP/SL are applied as **absolute prices** relative to the target exchange's fill price, ensuring the pip distance from Lighter is preserved.
+### 🛰️ Mode B: UI Mirroring (Real-Time Copy)
+*   **Trigger**: A trade is placed manually on the Lighter web interface.
+*   **Monitoring**: `PositionTracker` monitors the Lighter account via WebSocket.
+*   **Discovery**: Upon detecting a position increase, the bot automatically scans active orders to discover Take Profit (TP) and Stop Loss (SL) distances.
+*   **Concurrency**: The `CopyEngine` dispatches the trade to Pacifica and Decibel simultaneously.
+*   **Loop Protection**: Trades executed by the bot are marked and ignored by the tracker to prevent circular copying.
 
-## Data Flow Diagram
+---
 
-```mermaid
-graph TD
-    subgraph "Triggers"
-        TG[Telegram Signal] --> P[Signal Parser]
-        P --> ML[Market Listener]
-        UI[Lighter UI Trade] --> PT[Position Tracker]
-    end
+## 3. Risk Engine & Execution Pipeline
 
-    subgraph "Source: Lighter"
-        ML --> EX[Lighter Execution]
-        PT --> DIS[Signal Dispatcher]
-        EX --> DIS
-    end
+### 📉 Risk-Based Sizing
+To maintain professional risk management, the bot uses a "Constant USD Loss" model for copy targets (Pacifica/Decibel).
 
-    subgraph "Copy Targets"
-        DIS -->|Concurrent| PAC[Pacifica Engine]
-        DIS -->|Concurrent| DEC[Decibel Engine]
-    end
+**Formula:**
+`Position Size (Base) = MAX_LOSS_USD / SL_DISTANCE_PIPS`
 
-    subgraph "Decibel Sidecar"
-        DEC -->|Subprocess| NODE[executor.mjs]
-        NODE -->|SDK| APT[Aptos Blockchain]
-    end
-```
+This ensures that regardless of entry price or leverage, a Stop Loss event always results in a predictable USD loss (e.g., exactly $20).
 
-## Configuration ( .env )
+### 🛠 Execution Engines
+1.  **Lighter (Source)**: Python-based SDK integration for high-speed market and limit orders.
+2.  **Pacifica (Target)**: Direct REST API execution using Agent Keys. Supports dynamic TP/SL price resolution relative to the target's fill price.
+3.  **Decibel (Target)**: Integrated via a Node.js sidecar (`executor.mjs`). Communicates with the Aptos blockchain via the Decibel SDK. Uses IOC (Immediate-or-Cancel) orders for market-like fills with slippage control.
 
-### Lighter
-*   `LIGHTER_PRIVATE_KEY`: Your Lighter signing key.
-*   `LIGHTER_ACCOUNT_INDEX`: Your integer account ID (e.g., `722983`).
+---
 
-### Pacifica
-*   `PACIFICA_API_KEY`: Your Pacifica API Agent Key.
-*   `PACIFICA_SUBACCOUNT`: (Optional) Your Pacifica subaccount address. Leave blank for main account.
+## 4. Pro Terminal UX
 
-### Decibel
-*   `DECIBEL_PRIVATE_KEY`: Your API Wallet private key (AIP-80 format supported).
-*   `DECIBEL_NODE_API_KEY`: Your Decibel Node API Key (Bearer Token).
-*   `DECIBEL_SUBACCOUNT`: **Mandatory** Trading Account address.
+### 💼 Portfolio Aggregator
+The `/balance` command provides a consolidated dashboard fetching real-time equity from all exchanges. It features:
+*   **Visual Distribution**: Horizontal progress bars showing capital weight.
+*   **Unified Net Worth**: Summed USD value across all platforms.
+*   **Refresh Utility**: Inline buttons to trigger a fresh multi-exchange sync.
 
-## Security Features
-1.  **Authorized Users**: Only Telegram IDs listed in `ALLOWED_TELEGRAM_USER_IDS` can control the bot.
-2.  **Isolated Margin**: All Lighter trades are executed in Isolated Margin mode with explicitly set leverage.
-3.  **Error Handling**: Sidecar failures or API rejections are logged and notified via Telegram without crashing the main engine.
+### 🛰️ Position Tracker HUD
+The `/positions` command (and persistent menu) opens a high-fidelity HUD for Lighter positions:
+*   **Live PnL**: Real-time estimation using current mark prices.
+*   **TP/SL Visualization**: Shows distance in pips and estimated USD profit/loss at target.
+*   **Interactive Controls**: Buttons to adjust TP/SL or close at market instantly.
+
+### 🔔 Smart Alerts
+*   **Crossing Alerts**: Instant notification when a price is touched.
+*   **Closing Alerts**: Professional 5m candle close alerts.
+*   **Auto-Detection**: The bot automatically determines if an alert is "Above" or "Below" based on the current market price, simplifying user input.
+
+---
+
+## 5. Security & Reliability
+1.  **Authentication**: Strict Telegram User ID filtering via `ALLOWED_TELEGRAM_USER_IDS`.
+2.  **Encrypted Signing**: Lighter and Decibel keys remain local; Pacifica uses delegated Agent Keys.
+3.  **Graceful Fallback**: If a copy target fails, the bot notifies the user via Telegram but continues monitoring the primary exchange.
+4.  **Persistent Settings**: Risk parameters and exchange toggles are saved to `data/copy_settings.json` and persist across reloads.
