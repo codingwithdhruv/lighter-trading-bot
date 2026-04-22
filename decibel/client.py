@@ -94,17 +94,25 @@ class DecibelClient:
                 if isinstance(markets, list):
                     for m in markets:
                         name = m.get("market_name", "")
+                        # Cache under both BTC-USD and BTC/USD formats
                         self._market_cache[name] = m
+                        alt_name = name.replace("/", "-") if "/" in name else name.replace("-", "/")
+                        self._market_cache[alt_name] = m
                     return markets
         except Exception as e:
             logger.error(f"Decibel get_markets error: {e}")
         return []
 
     def get_market_config(self, symbol: str) -> dict:
-        """Get cached market config. Fetches if cache is empty."""
+        """Get cached market config. Fetches if cache is empty. Tries both name formats."""
         if not self._market_cache:
             self.get_markets()
-        return self._market_cache.get(symbol, {})
+        config = self._market_cache.get(symbol, {})
+        if not config:
+            # Try alternate format
+            alt = symbol.replace("/", "-") if "/" in symbol else symbol.replace("-", "/")
+            config = self._market_cache.get(alt, {})
+        return config
 
     def get_account_balance(self) -> float:
         """Fetch account equity/margin from REST."""
@@ -154,12 +162,18 @@ class DecibelClient:
             if stderr:
                 stderr_text = stderr.decode().strip()
                 if stderr_text:
-                    logger.debug(f"Decibel sidecar stderr: {stderr_text}")
+                    logger.warning(f"Decibel sidecar stderr: {stderr_text}")
 
             if stdout:
-                return json.loads(stdout.decode().strip())
+                result = json.loads(stdout.decode().strip())
+                # If the command failed, surface stderr in the error field
+                if not result.get("success") and stderr:
+                    stderr_text = stderr.decode().strip()
+                    if stderr_text and not result.get("error"):
+                        result["error"] = stderr_text
+                return result
             else:
-                return {"success": False, "error": "No output from sidecar"}
+                return {"success": False, "error": f"No output from sidecar. stderr: {stderr.decode().strip() if stderr else 'none'}"}
 
         except asyncio.TimeoutError:
             logger.error("Decibel sidecar timed out (30s)")

@@ -163,10 +163,14 @@ async function main() {
 
         const result = await write.placeOrder(orderArgs);
 
+        // Log the full result for debugging
+        process.stderr.write(`placeOrder result: ${JSON.stringify(result)}\n`);
+
         reply({
-          success: result.success,
+          success: result.success ?? !!result.transactionHash ?? !!result.hash,
           orderId: result.orderId || null,
           transactionHash: result.transactionHash || result.hash || null,
+          error: result.error || null,
         });
         break;
       }

@@ -50,18 +50,21 @@ class PacificaExecutionEngine:
         }
 
         # Inline TP/SL with the market order (per docs, avoids separate call)
+        # Prices must be multiples of tick size (1 for BTC), so round to integers
         if sl_pips > 0:
             sl_price = entry_price - sl_pips if side.upper() == "LONG" else entry_price + sl_pips
+            sl_limit = sl_price * (0.999 if side.upper() == "LONG" else 1.001)
             operation_data["stop_loss"] = {
-                "stop_price": f"{sl_price:.2f}",
-                "limit_price": f"{(sl_price * (0.999 if side.upper() == 'LONG' else 1.001)):.2f}"
+                "stop_price": str(int(round(sl_price))),
+                "limit_price": str(int(round(sl_limit)))
             }
 
         if tp_pips > 0:
             tp_price = entry_price + tp_pips if side.upper() == "LONG" else entry_price - tp_pips
+            tp_limit = tp_price * (1.001 if side.upper() == "LONG" else 0.999)
             operation_data["take_profit"] = {
-                "stop_price": f"{tp_price:.2f}",
-                "limit_price": f"{(tp_price * (1.001 if side.upper() == 'LONG' else 0.999)):.2f}"
+                "stop_price": str(int(round(tp_price))),
+                "limit_price": str(int(round(tp_limit)))
             }
 
         signed_payload = self.client.sign_payload("create_market_order", operation_data)
