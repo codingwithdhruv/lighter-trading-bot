@@ -16,6 +16,8 @@ class ConfigManager:
         self.decibel_enabled = True
         self.decibel_leverage = 40
         self.decibel_max_loss_usd = 20.0
+        # UI Closure Tracking
+        self.track_ui_closures = False
         self.load()
 
     def load(self):
@@ -29,6 +31,7 @@ class ConfigManager:
                     self.decibel_enabled = data.get("decibel_enabled", self.decibel_enabled)
                     self.decibel_leverage = data.get("decibel_leverage", self.decibel_leverage)
                     self.decibel_max_loss_usd = data.get("decibel_max_loss_usd", self.decibel_max_loss_usd)
+                    self.track_ui_closures = data.get("track_ui_closures", self.track_ui_closures)
             except Exception as e:
                 logger.error(f"Failed to load copy settings: {e}")
 
@@ -43,6 +46,7 @@ class ConfigManager:
                     "decibel_enabled": self.decibel_enabled,
                     "decibel_leverage": self.decibel_leverage,
                     "decibel_max_loss_usd": self.decibel_max_loss_usd,
+                    "track_ui_closures": self.track_ui_closures
                 }, f, indent=4)
         except Exception as e:
             logger.error(f"Failed to save copy settings: {e}")
@@ -56,6 +60,11 @@ class ConfigManager:
         self.decibel_enabled = not self.decibel_enabled
         self.save()
         return self.decibel_enabled
+        
+    def toggle_track_ui_closures(self) -> bool:
+        self.track_ui_closures = not self.track_ui_closures
+        self.save()
+        return self.track_ui_closures
         
     def update_setting(self, key: str, value):
         if hasattr(self, key):

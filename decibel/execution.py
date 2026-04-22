@@ -37,7 +37,8 @@ class DecibelExecutionEngine:
         self.client = decibel_client
 
     async def execute_copy_trade(self, symbol: str, side: str, sl_pips: float,
-                                 max_loss_usd: float, leverage: int, tp_pips: float = 0.0) -> bool:
+                                 max_loss_usd: float, leverage: int, tp_pips: float = 0.0,
+                                 notification_callback=None) -> bool:
         """
         Execute a copy trade on Decibel.
         Mirrors the Pacifica execution flow exactly:
@@ -125,62 +126,176 @@ class DecibelExecutionEngine:
 
         tx_hash = result.get("transactionHash", "N/A")
         logger.info(f"Decibel order placed. TxHash: {tx_hash}")
-
-        # 7. Apply TP/SL after a brief settlement delay
-        if (sl_pips > 0 or tp_pips > 0) and market_addr:
-            await asyncio.sleep(2)
-            await self._apply_tpsl(market_addr, side, entry_price, sl_pips, tp_pips,
-                                   chain_size, px_decimals, tick_size)
-
+        
+        # Spawn background TP/SL monitor task if needed
+        if sl_pips > 0 or tp_pips > 0:
+            tp_price = 0.0
+            sl_price = 0.0
+            if side.upper() == "LONG":
+                if tp_pips > 0: tp_price = entry_price + tp_pips
+                if sl_pips > 0: sl_price = entry_price - sl_pips
+            else:
+                if tp_pips > 0: tp_price = entry_price - tp_pips
+                if sl_pips > 0: sl_price = entry_price + sl_pips
+                
+            asyncio.create_task(self._monitor_tpsl(symbol, side, tp_price, sl_price, notification_callback))
+            
         return True
 
-    async def _apply_tpsl(self, market_addr: str, side: str, entry_price: float,
-                          sl_pips: float, tp_pips: float, chain_size: int,
-                          px_decimals: int, tick_size: int):
-        """Place TP/SL for the position via sidecar."""
-        if sl_pips <= 0 and tp_pips <= 0:
-            return
-
+    async def _monitor_tpsl(self, symbol: str, side: str, tp_price: float, sl_price: float, notification_callback=None):
+        """Continuously monitor mark price to trigger local limit close loop on TP/SL hits."""
+        logger.info(f"Decibel: Started background TP/SL monitor for {symbol}. TP={tp_price}, SL={sl_price}")
         is_long = side.upper() == "LONG"
+        
+        while True:
+            await asyncio.sleep(2)
+            
+            # 1. Fetch current position to ensure it hasn't been closed by UI tracking
+            positions = self.client.get_positions(symbol)
+            if not positions:
+                logger.info(f"Decibel: Position {symbol} closed externally. Stopping TP/SL monitor.")
+                break
+                
+            pos = positions[0]
+            current_amount = float(pos.get("position_size", pos.get("size", "0")))
+            if current_amount == 0:
+                logger.info(f"Decibel: Position {symbol} closed externally. Stopping TP/SL monitor.")
+                break
+                
+            current_price = self.client.get_price(symbol)
+            if current_price <= 0:
+                continue
+                
+            triggered = False
+            trigger_type = ""
+            
+            if is_long:
+                if tp_price and current_price >= tp_price:
+                    triggered = True
+                    trigger_type = "TP"
+                elif sl_price and current_price <= sl_price:
+                    triggered = True
+                    trigger_type = "SL"
+            else:
+                if tp_price and current_price <= tp_price:
+                    triggered = True
+                    trigger_type = "TP"
+                elif sl_price and current_price >= sl_price:
+                    triggered = True
+                    trigger_type = "SL"
+                    
+            if triggered:
+                msg = f"🔔 *Decibel {trigger_type} Hit* for {symbol} at ${current_price:,.2f}!\nStarting mid-price limit closing loop..."
+                logger.info(msg)
+                if notification_callback:
+                    await notification_callback(msg)
+                    
+                # Execute 100% close
+                await self.execute_close_trade(symbol, side, 1.0, notification_callback)
+                break
 
-        tp_trigger = None
-        tp_limit = None
-        sl_trigger = None
-        sl_limit = None
+    async def execute_close_trade(self, symbol: str, side: str, percent_closed: float, notification_callback=None) -> bool:
+        """Close a position using a mid-price limit order repricing loop on Decibel."""
+        positions = self.client.get_positions(symbol)
+        if not positions:
+            logger.info(f"Decibel: No open positions found for {symbol} to close.")
+            return True
+            
+        pos = positions[0]
+        # Decibel REST position object typically has 'position_size' or 'size'
+        current_size_str = pos.get("position_size", pos.get("size", "0"))
+        current_amount = float(current_size_str)
+        
+        if current_amount <= 0:
+            return True
+            
+        target_close_amount = current_amount * percent_closed
+        
+        # Determine side (if currently long/positive, close with short/sell)
+        pos_side = "LONG" if current_amount > 0 else "SHORT"
+        is_buy = pos_side == "SHORT"
+        
+        # Decibel SDK expects positive size
+        remaining_to_close = abs(target_close_amount)
+        current_amount_abs = abs(current_amount)
+        attempt = 0
+        
+        logger.info(f"Decibel: Starting infinite mid-price limit close loop for {symbol}. Target amount: {remaining_to_close:.6f}")
+        
+        market_config = self.client.get_market_config(symbol)
+        if not market_config:
+            logger.error(f"Decibel: Cannot find market config for {symbol}")
+            return False
+            
+        market_name = market_config.get("market_name", symbol)
+        px_decimals = market_config.get("px_decimals", 6)
+        sz_decimals = market_config.get("sz_decimals", 6)
+        tick_size = market_config.get("tick_size", 100)
+        lot_size = market_config.get("lot_size", 1000)
+        min_size = market_config.get("min_size", 1000)
+        
+        while True:
+            if remaining_to_close <= 0:
+                logger.info(f"Decibel: Successfully closed {percent_closed*100:.1f}% position for {symbol}.")
+                return True
+                
+            attempt += 1
+            if attempt > 1 and attempt % 6 == 0:
+                # Every ~30 seconds, alert Telegram if still looping
+                alert_msg = f"⚠️ *Decibel Close Loop Warning*\nStill trying to close {remaining_to_close:.6f} {symbol}.\nAttempt: {attempt}"
+                logger.warning(alert_msg)
+                if notification_callback:
+                    await notification_callback(alert_msg)
+                
+            # For Decibel, get_price returns mark_px which tracks mid-price well.
+            # Using mark price avoids needing to query full orderbook just for mid
+            mid_price = self.client.get_price(symbol)
+            if mid_price <= 0:
+                logger.warning("Decibel: Invalid mark price, skipping close attempt.")
+                await asyncio.sleep(5)
+                continue
+                
+            chain_price = round_to_tick(amount_to_chain_units(mid_price, px_decimals), tick_size)
+            chain_size = round_to_lot(amount_to_chain_units(remaining_to_close, sz_decimals), lot_size, min_size)
+            
+            # Place GoodTillCanceled (0) limit order
+            result = await self.client.place_order(
+                market_name=market_name,
+                price=chain_price,
+                size=chain_size,
+                is_buy=is_buy,
+                time_in_force=0, 
+                is_reduce_only=True
+            )
+            
+            order_id = result.get("orderId")
+            if not result.get("success"):
+                logger.error(f"Decibel limit close rejected: {result.get('error', 'unknown')}")
+                await asyncio.sleep(5)
+                continue
+                
+            # Wait for order to fill
+            await asyncio.sleep(5)
+            
+            # Cancel the unfilled remainder
+            if order_id:
+                await self.client.cancel_order(order_id)
+                await asyncio.sleep(1)
+                
+            # Update remaining amount
+            current_positions = self.client.get_positions(symbol)
+            if not current_positions:
+                return True
+                
+            new_amount_str = current_positions[0].get("position_size", current_positions[0].get("size", "0"))
+            new_amount_abs = abs(float(new_amount_str))
+            
+            filled_this_loop = current_amount_abs - new_amount_abs
+            if filled_this_loop > 0:
+                remaining_to_close -= filled_this_loop
+                current_amount_abs = new_amount_abs
 
-        if tp_pips > 0:
-            tp_price = entry_price + tp_pips if is_long else entry_price - tp_pips
-            tp_trigger = round_to_tick(amount_to_chain_units(tp_price, px_decimals), tick_size)
-            # Limit slightly worse than trigger to ensure fill
-            tp_limit_price = tp_price * (0.999 if is_long else 1.001)
-            tp_limit = round_to_tick(amount_to_chain_units(tp_limit_price, px_decimals), tick_size)
-
-        if sl_pips > 0:
-            sl_price = entry_price - sl_pips if is_long else entry_price + sl_pips
-            sl_trigger = round_to_tick(amount_to_chain_units(sl_price, px_decimals), tick_size)
-            # Limit slightly worse than trigger to ensure fill
-            sl_limit_price = sl_price * (0.999 if is_long else 1.001)
-            sl_limit = round_to_tick(amount_to_chain_units(sl_limit_price, px_decimals), tick_size)
-
-        logger.info(
-            f"Decibel: Setting TP/SL for {market_addr} | "
-            f"TP={tp_trigger} SL={sl_trigger}"
-        )
-
-        result = await self.client.place_tpsl(
-            market_addr=market_addr,
-            tp_trigger=tp_trigger,
-            tp_limit=tp_limit,
-            tp_size=chain_size,
-            sl_trigger=sl_trigger,
-            sl_limit=sl_limit,
-            sl_size=chain_size,
-        )
-
-        if result.get("success"):
-            logger.info(f"Decibel TP/SL set. TxHash: {result.get('transactionHash', 'N/A')}")
-        else:
-            logger.error(f"Decibel TP/SL failed: {result.get('error', 'unknown')}")
+        return False
 
     def _resolve_market_name(self, symbol: str) -> str:
         """Convert asset symbol to Decibel SDK market name format (e.g. BTC -> BTC-USD).

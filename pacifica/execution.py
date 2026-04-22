@@ -9,7 +9,7 @@ class PacificaExecutionEngine:
     def __init__(self):
         self.client = pacifica_client
 
-    async def execute_copy_trade(self, symbol: str, side: str, sl_pips: float, max_loss_usd: float, leverage: int, tp_pips: float = 0.0):
+    async def execute_copy_trade(self, symbol: str, side: str, sl_pips: float, max_loss_usd: float, leverage: int, tp_pips: float = 0.0, notification_callback=None):
         # 1. Fetch market info and balance
         entry_price = self.client.get_price(symbol)
         if entry_price <= 0:
@@ -54,22 +54,6 @@ class PacificaExecutionEngine:
 
         # Inline TP/SL with the market order (per docs, avoids separate call)
         # Prices must be multiples of tick size (1 for BTC), so round to integers
-        if sl_pips > 0:
-            sl_price = entry_price - sl_pips if side.upper() == "LONG" else entry_price + sl_pips
-            sl_limit = sl_price * (0.999 if side.upper() == "LONG" else 1.001)
-            operation_data["stop_loss"] = {
-                "stop_price": str(int(round(sl_price))),
-                "limit_price": str(int(round(sl_limit)))
-            }
-
-        if tp_pips > 0:
-            tp_price = entry_price + tp_pips if side.upper() == "LONG" else entry_price - tp_pips
-            tp_limit = tp_price * (1.001 if side.upper() == "LONG" else 0.999)
-            operation_data["take_profit"] = {
-                "stop_price": str(int(round(tp_price))),
-                "limit_price": str(int(round(tp_limit)))
-            }
-
         signed_payload = self.client.sign_payload("create_market_order", operation_data)
         
         # 4. Execute the market order
@@ -80,6 +64,20 @@ class PacificaExecutionEngine:
             if resp.status_code == 200:
                 data = resp.json()
                 logger.info(f"Pacifica Order Response: {data}")
+                
+                # Spawn background TP/SL monitor task if needed
+                if sl_pips > 0 or tp_pips > 0:
+                    tp_price = 0.0
+                    sl_price = 0.0
+                    if side.upper() == "LONG":
+                        if tp_pips > 0: tp_price = entry_price + tp_pips
+                        if sl_pips > 0: sl_price = entry_price - sl_pips
+                    else:
+                        if tp_pips > 0: tp_price = entry_price - tp_pips
+                        if sl_pips > 0: sl_price = entry_price + sl_pips
+                        
+                    asyncio.create_task(self._monitor_tpsl(symbol, side, tp_price, sl_price, notification_callback))
+                
                 return True
             else:
                 logger.error(f"Pacifica Order Rejected: {resp.text}")
@@ -87,5 +85,162 @@ class PacificaExecutionEngine:
         except Exception as e:
             logger.error(f"Pacifica Execute Exception: {e}")
             return False
+
+    async def _monitor_tpsl(self, symbol: str, side: str, tp_price: float, sl_price: float, notification_callback=None):
+        """Continuously monitor mark price to trigger local limit close loop on TP/SL hits."""
+        logger.info(f"Pacifica: Started background TP/SL monitor for {symbol}. TP={tp_price}, SL={sl_price}")
+        is_long = side.upper() == "LONG"
+        
+        while True:
+            await asyncio.sleep(2)
+            
+            # 1. Fetch current position to ensure it hasn't been closed by UI tracking
+            positions = self.client.get_positions(symbol)
+            if not positions or float(positions[0].get("amount", "0")) <= 0:
+                logger.info(f"Pacifica: Position {symbol} closed externally. Stopping TP/SL monitor.")
+                break
+                
+            current_price = self.client.get_price(symbol)
+            if current_price <= 0:
+                continue
+                
+            triggered = False
+            trigger_type = ""
+            
+            if is_long:
+                if tp_price and current_price >= tp_price:
+                    triggered = True
+                    trigger_type = "TP"
+                elif sl_price and current_price <= sl_price:
+                    triggered = True
+                    trigger_type = "SL"
+            else:
+                if tp_price and current_price <= tp_price:
+                    triggered = True
+                    trigger_type = "TP"
+                elif sl_price and current_price >= sl_price:
+                    triggered = True
+                    trigger_type = "SL"
+                    
+            if triggered:
+                msg = f"🔔 *Pacifica {trigger_type} Hit* for {symbol} at ${current_price:,.2f}!\nStarting mid-price limit closing loop..."
+                logger.info(msg)
+                if notification_callback:
+                    await notification_callback(msg)
+                    
+                # Execute 100% close
+                await self.execute_close_trade(symbol, side, 1.0, notification_callback)
+                break
+
+    async def execute_close_trade(self, symbol: str, side: str, percent_closed: float, notification_callback=None) -> bool:
+        """Close a position using a mid-price limit order repricing loop."""
+        # 1. Fetch current position
+        positions = self.client.get_positions(symbol)
+        if not positions:
+            logger.info(f"Pacifica: No open positions found for {symbol} to close.")
+            return True
+            
+        pos = positions[0] # Assuming 1 position per symbol
+        current_amount = float(pos.get("amount", "0"))
+        if current_amount <= 0:
+            return True
+            
+        target_close_amount = current_amount * percent_closed
+        
+        pos_side = pos.get("side", "")
+        # If open position is bid (LONG), close side must be ask (SHORT)
+        close_side = "ask" if pos_side == "bid" else "bid"
+        
+        remaining_to_close = target_close_amount
+        attempt = 0
+        
+        logger.info(f"Pacifica: Starting infinite mid-price limit close loop for {symbol}. Target amount: {target_close_amount:.6f}")
+        
+        while True:
+            if remaining_to_close <= 0:
+                logger.info(f"Pacifica: Successfully closed {percent_closed*100:.1f}% position for {symbol}.")
+                return True
+                
+            attempt += 1
+            if attempt > 1 and attempt % 6 == 0:
+                # Every ~30 seconds, alert Telegram if still looping
+                alert_msg = f"⚠️ *Pacifica Close Loop Warning*\nStill trying to close {remaining_to_close:.6f} {symbol}.\nAttempt: {attempt}"
+                logger.warning(alert_msg)
+                if notification_callback:
+                    await notification_callback(alert_msg)
+                
+            # Fetch Orderbook to get mid price
+            ob = self.client.get_orderbook(symbol)
+            bids = ob.get("l", [[], []])[0]
+            asks = ob.get("l", [[], []])[1]
+            
+            if not bids or not asks:
+                logger.warning("Pacifica: Empty orderbook, skipping close attempt.")
+                await asyncio.sleep(5)
+                continue
+                
+            best_bid = float(bids[0].get("p", 0))
+            best_ask = float(asks[0].get("p", 0))
+            mid_price = (best_bid + best_ask) / 2
+            
+            # Format price - BTC tick size is 1, so round to integer
+            if symbol.upper() == "BTC":
+                formatted_price = str(int(round(mid_price)))
+            else:
+                formatted_price = f"{mid_price:.4f}"
+                
+            formatted_size = f"{remaining_to_close:.6f}".rstrip("0").rstrip(".")
+            if not formatted_size or formatted_size == "0":
+                break
+                
+            client_order_id = str(uuid.uuid4())
+            
+            operation_data = {
+                "symbol": symbol.upper(),
+                "price": formatted_price,
+                "amount": formatted_size,
+                "side": close_side,
+                "tif": "GTC",
+                "reduce_only": True,
+                "client_order_id": client_order_id
+            }
+            
+            signed_payload = self.client.sign_payload("create_limit_order", operation_data)
+            
+            try:
+                resp = await asyncio.to_thread(requests.post, f"{PACIFICA_REST_URL}/api/v1/orders/create_limit", json=signed_payload, timeout=5)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    order_id = data.get("data", {}).get("order_id") or data.get("order_id")
+                else:
+                    logger.error(f"Pacifica limit close rejected: {resp.text}")
+                    await asyncio.sleep(5)
+                    continue
+            except Exception as e:
+                logger.error(f"Pacifica limit close error: {e}")
+                await asyncio.sleep(5)
+                continue
+                
+            # Wait for order to fill
+            await asyncio.sleep(5)
+            
+            # Cancel the unfilled remainder
+            if order_id:
+                self.client.cancel_order(symbol, order_id)
+                # Brief wait after cancel to let positions update
+                await asyncio.sleep(1)
+                
+            # Update remaining amount by checking new position size
+            current_positions = self.client.get_positions(symbol)
+            if not current_positions:
+                return True # Fully closed
+                
+            new_amount = float(current_positions[0].get("amount", "0"))
+            filled_this_loop = current_amount - new_amount
+            if filled_this_loop > 0:
+                remaining_to_close -= filled_this_loop
+                current_amount = new_amount
+
+        return False
 
 pacifica_executor = PacificaExecutionEngine()

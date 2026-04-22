@@ -115,6 +115,31 @@ class PositionTracker:
                     sl_pips=sl_pips,
                     tp_pips=tp_pips
                 )
+            elif abs(new_size) < abs(old_size):
+                # Position was reduced or closed
+                from core.config_manager import config_manager
+                
+                if config_manager.track_ui_closures and old_size != 0:
+                    symbol = pos_data.get("symbol", "UNKNOWN").split('-')[0]
+                    normalized = symbol.upper().replace("USDC", "").replace("USDT", "").replace(" PERP", "").replace("-", "").strip()
+                    
+                    if normalized in self._bot_executed_markets:
+                        logger.info(f"WS Tracker ignoring bot-executed close for {symbol}")
+                        self._bot_executed_markets.discard(normalized)
+                    else:
+                        percent_closed = (abs(old_size) - abs(new_size)) / abs(old_size)
+                        original_side = "LONG" if old_size > 0 else "SHORT"
+                        
+                        logger.info(f"Lighter WS Detected UI Close: {percent_closed*100:.1f}% of {original_side} {symbol}")
+                        
+                        if self.notification_callback:
+                            await self.notification_callback(f"🛑 *UI Close Detected:* {percent_closed*100:.1f}% of {original_side} {symbol}")
+                        
+                        await copy_engine.process_close_signal(
+                            symbol=symbol,
+                            side=original_side,
+                            percent_closed=percent_closed
+                        )
                 
             self._positions_cache[market_idx_str] = new_size
 

@@ -82,11 +82,15 @@ class TelegramBotHandler:
         from core.config_manager import config_manager
         pacifica_status = "🟢 ON" if config_manager.pacifica_enabled else "🔴 OFF"
         decibel_status = "🟢 ON" if config_manager.decibel_enabled else "🔴 OFF"
+        ui_closes_status = "🟢 ON" if config_manager.track_ui_closures else "🔴 OFF"
         
         keyboard = [
             [
                 InlineKeyboardButton(f"Pacifica: {pacifica_status}", callback_data='toggle_pacifica'),
                 InlineKeyboardButton(f"Decibel: {decibel_status}", callback_data='toggle_decibel'),
+            ],
+            [
+                InlineKeyboardButton(f"Track UI Closes: {ui_closes_status}", callback_data='toggle_uiclose'),
             ],
             [
                 InlineKeyboardButton(f"P.Lev: {config_manager.pacifica_leverage}x", callback_data='set_lev'),
@@ -521,6 +525,11 @@ class TelegramBotHandler:
             from core.config_manager import config_manager
             new_state = config_manager.toggle_decibel()
             await query.answer(f"Decibel Copy: {'ENABLED' if new_state else 'DISABLED'}")
+            await query.edit_message_reply_markup(reply_markup=self._get_settings_keyboard())
+        elif data == 'toggle_uiclose':
+            from core.config_manager import config_manager
+            new_state = config_manager.toggle_track_ui_closures()
+            await query.answer(f"UI Closures Tracking: {'ENABLED' if new_state else 'DISABLED'}")
             await query.edit_message_reply_markup(reply_markup=self._get_settings_keyboard())
         elif data == 'set_lev':
             context.user_data['pending_setting'] = 'pacifica_leverage'

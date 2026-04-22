@@ -143,4 +143,47 @@ class PacificaClient:
             logger.error(f"Error fetching Pacifica subaccounts fallback: {e}")
         return 0.0
 
+    def get_positions(self, symbol: str = None) -> list:
+        try:
+            target = self.account if self.account else self.public_key_b58
+            if not target:
+                return []
+            resp = requests.get(f"{PACIFICA_REST_URL}/api/v1/positions?account={target}", timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("success"):
+                    positions = data.get("data", [])
+                    if symbol:
+                        return [p for p in positions if p.get("symbol", "").upper() == symbol.upper()]
+                    return positions
+        except Exception as e:
+            logger.error(f"Pacifica Fetch Positions Error: {e}")
+        return []
+
+    def get_orderbook(self, symbol: str) -> dict:
+        try:
+            resp = requests.get(f"{PACIFICA_REST_URL}/api/v1/book?symbol={symbol.upper()}", timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("success"):
+                    return data.get("data", {})
+        except Exception as e:
+            logger.error(f"Pacifica Fetch Orderbook Error: {e}")
+        return {}
+
+    def cancel_order(self, symbol: str, order_id: int) -> bool:
+        try:
+            payload = {
+                "symbol": symbol.upper(),
+                "order_id": order_id
+            }
+            signed_payload = self.sign_payload("cancel_order", payload)
+            resp = requests.post(f"{PACIFICA_REST_URL}/api/v1/orders/cancel", json=signed_payload, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("success", False) or data.get("code") == 200
+        except Exception as e:
+            logger.error(f"Pacifica Cancel Order Error: {e}")
+        return False
+
 pacifica_client = PacificaClient()

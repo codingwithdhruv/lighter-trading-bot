@@ -135,6 +135,31 @@ class DecibelClient:
             logger.error(f"Decibel get_account_balance error: {e}")
         return 0.0
 
+    def get_positions(self, symbol: str = None) -> list:
+        if not self.subaccount: return []
+        if not self._market_cache: self.get_markets()
+        try:
+            resp = requests.get(
+                f"{DECIBEL_REST_BASE}/api/v1/positions",
+                headers=self._headers(),
+                params={"account": self.subaccount},
+                timeout=5
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                if isinstance(data, list):
+                    if symbol:
+                        market_addr = ""
+                        for name, cfg in self._market_cache.items():
+                            if name.upper() == symbol.upper() or name.upper() == symbol.upper().replace("/", "-"):
+                                market_addr = cfg.get("market_addr")
+                                break
+                        return [p for p in data if p.get("market") == market_addr]
+                    return data
+        except Exception as e:
+            logger.error(f"Decibel get_positions error: {e}")
+        return []
+
     # ── Sidecar Write Helpers ─────────────────────────────────────────────
 
     async def _call_sidecar(self, command: str, args: dict = None) -> dict:
@@ -184,14 +209,18 @@ class DecibelClient:
 
     async def place_order(self, market_name: str, price: int, size: int,
                           is_buy: bool, tp_trigger: int = None, tp_limit: int = None,
-                          sl_trigger: int = None, sl_limit: int = None) -> dict:
+                          sl_trigger: int = None, sl_limit: int = None,
+                          time_in_force: int = None, is_reduce_only: bool = False) -> dict:
         """Place an order via the sidecar."""
         args = {
             "marketName": market_name,
             "price": price,
             "size": size,
             "isBuy": is_buy,
+            "isReduceOnly": is_reduce_only
         }
+        if time_in_force is not None:
+            args["timeInForce"] = time_in_force
         if tp_trigger is not None:
             args["tpTriggerPrice"] = tp_trigger
         if tp_limit is not None:
@@ -204,6 +233,10 @@ class DecibelClient:
             args["subaccountAddr"] = self.subaccount
 
         return await self._call_sidecar("place_order", args)
+
+    async def cancel_order(self, order_id: str) -> bool:
+        result = await self._call_sidecar("cancel_order", {"orderId": order_id})
+        return result.get("success", False)
 
     async def place_tpsl(self, market_addr: str, tp_trigger: int = None,
                          tp_limit: int = None, tp_size: int = None,

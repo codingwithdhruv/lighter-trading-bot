@@ -149,8 +149,8 @@ async function main() {
           price: Number(price),
           size: Number(size),
           isBuy: Boolean(isBuy),
-          timeInForce: TimeInForce.ImmediateOrCancel,  // Market-like behavior
-          isReduceOnly: false,
+          timeInForce: args.timeInForce !== undefined ? Number(args.timeInForce) : TimeInForce.ImmediateOrCancel,
+          isReduceOnly: Boolean(args.isReduceOnly || false),
           clientOrderId: `lighter-bot-${Date.now()}`,
         };
 
@@ -169,6 +169,23 @@ async function main() {
         reply({
           success: result.success ?? !!result.transactionHash ?? !!result.hash,
           orderId: result.orderId || null,
+          transactionHash: result.transactionHash || result.hash || null,
+          error: result.error || null,
+        });
+        break;
+      }
+
+      // ── Cancel Order ───────────────────────────────────────────────────
+      case "cancel_order": {
+        const { orderId } = args;
+        if (!orderId) {
+          reply({ success: false, error: "cancel_order requires orderId" });
+          break;
+        }
+        
+        const result = await write.cancelOrder({ orderId: Number(orderId) });
+        reply({
+          success: result.success ?? !!result.transactionHash ?? !!result.hash,
           transactionHash: result.transactionHash || result.hash || null,
           error: result.error || null,
         });
