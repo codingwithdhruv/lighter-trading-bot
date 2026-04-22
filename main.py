@@ -42,8 +42,10 @@ class BotApplication:
                 on_signal_callback=self._on_new_signal, 
                 app_context=self
             )
-            # Link bot to listener for order alerts
+            # Link internal modules to notification system
             self.market_listener.bot_handler = self.telegram_bot
+            from core.copy_engine import copy_engine
+            copy_engine.notification_callback = self.telegram_bot.send_message
             
         except Exception as e:
             logger.error(f"Initialization error: {e}")
@@ -91,7 +93,8 @@ class BotApplication:
             logger.info("Bot is active and running.")
             await self.telegram_bot.send_message("✅ Bot System Online.")
 
-            # Start real-time Lighter UI tradeoff listener
+            # Link UI tracker to notification system
+            lighter_position_tracker.notification_callback = self.telegram_bot.send_message
             await lighter_position_tracker.start()
 
             # Start monitoring prices (blocks forever)

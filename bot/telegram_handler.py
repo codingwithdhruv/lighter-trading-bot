@@ -334,7 +334,7 @@ class TelegramBotHandler:
             
             # Fetch active orders
             resp = await order_api.account_active_orders_without_preload_content(
-                account_index=LIGHTER_ACCOUNT_INDEX, auth=auth_token
+                account_index=LIGHTER_ACCOUNT_INDEX, market_id=int(mkt_id), auth=auth_token
             )
             data = await resp.json()
             orders = data.get('orders', [])

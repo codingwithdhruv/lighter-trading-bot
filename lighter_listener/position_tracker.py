@@ -1,16 +1,18 @@
 import asyncio
 import json
+from typing import Callable, Awaitable
 from utils.logger import logger
 from utils.config import LIGHTER_ACCOUNT_INDEX
 from trading.lighter_client import lighter_wrapper
 from core.copy_engine import copy_engine
 
 class PositionTracker:
-    def __init__(self):
+    def __init__(self, notification_callback: Callable[[str], Awaitable[None]] = None):
         self._running = False
         self._task = None
         self._positions_cache = {}
         self._bot_executed_markets = set()
+        self.notification_callback = notification_callback
         
     def mark_as_bot_executed(self, asset: str):
         normalized = asset.upper().replace("USDC", "").replace("USDT", "").replace(" PERP", "").replace("-", "").strip()
@@ -96,9 +98,16 @@ class PositionTracker:
                     self._positions_cache[market_idx_str] = new_size
                     continue
                 
-                logger.info(f"Lighter WS Detected UI Trade: {side} {symbol} @ {entry_price}")
-                
                 tp_pips, sl_pips = await self._discover_tpsl_pips(market_idx_str, side, entry_price)
+                
+                msg = f"🛰️ *UI Trade Detected:* {side} {symbol} @ {entry_price}"
+                if sl_pips > 0: msg += f"\n🛡️ SL: {sl_pips:.2f} pips"
+                else: msg += "\n⚠️ No SL found on Lighter."
+                
+                if self.notification_callback:
+                    await self.notification_callback(msg)
+                
+                logger.info(f"Lighter WS Detected UI Trade: {side} {symbol} @ {entry_price}")
                 
                 await copy_engine.process_copy_signal(
                     symbol=symbol,
@@ -113,10 +122,13 @@ class PositionTracker:
         try:
             from lighter.api.order_api import OrderApi
             order_api = OrderApi(lighter_wrapper.api_client)
-            resp = await order_api.account_active_orders_without_preload_content(LIGHTER_ACCOUNT_INDEX)
+            market_id = int(market_idx)
+            auth_token = lighter_wrapper.get_auth_token()
+            resp = await order_api.account_active_orders_without_preload_content(
+                market_id=market_id, account_index=LIGHTER_ACCOUNT_INDEX, auth=auth_token
+            )
             
             data = await resp.json()
-            market_id = int(market_idx)
             
             sl_pips = 0.0
             tp_pips = 0.0

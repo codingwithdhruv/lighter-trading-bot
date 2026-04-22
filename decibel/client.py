@@ -37,21 +37,25 @@ class DecibelClient:
     def get_price(self, symbol: str) -> float:
         """Fetch mark/oracle price for a symbol (e.g. 'BTC-USD')."""
         try:
+            # The API uses /api/v1/prices (not market_prices)
+            # symbol might need conversion if the API expects BTC/USD instead of BTC-USD
+            api_symbol = symbol.replace("-", "/") 
             resp = requests.get(
-                f"{DECIBEL_REST_BASE}/api/v1/market_prices",
+                f"{DECIBEL_REST_BASE}/api/v1/prices",
                 headers=self._headers(),
-                params={"market": symbol},
+                params={"market": api_symbol},
                 timeout=5,
             )
             if resp.status_code == 200:
                 data = resp.json()
-                # Response may be a list or single object
+                # data is likely a list: [{"mark_price": "...", "market_addr": "..."}]
                 if isinstance(data, list) and len(data) > 0:
-                    return float(data[0].get("mark_price", 0)) / (10 ** 6)
+                    item = data[0]
+                    return float(item.get("mark_price", 0))
                 elif isinstance(data, dict):
-                    return float(data.get("mark_price", 0)) / (10 ** 6)
+                    return float(data.get("mark_price", 0))
         except Exception as e:
-            logger.error(f"Decibel get_price error: {e}")
+            logger.error(f"Decibel get_price error for {symbol}: {e}")
         return 0.0
 
     def get_markets(self) -> list:
