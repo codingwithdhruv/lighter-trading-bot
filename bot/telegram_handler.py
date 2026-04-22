@@ -2,7 +2,7 @@ import asyncio
 import json
 import time
 from typing import Callable, Awaitable
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
     Application, 
     CommandHandler, 
@@ -638,7 +638,6 @@ class TelegramBotHandler:
 
     def _get_persistent_menu(self):
         """Permanent bottom menu for quick access"""
-        from telegram import ReplyKeyboardMarkup, KeyboardButton
         keyboard = [
             [KeyboardButton("💼 Portfolio"), KeyboardButton("🛰️ Positions")],
             [KeyboardButton("⚙️ Settings"), KeyboardButton("❓ Help")]
