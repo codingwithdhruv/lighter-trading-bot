@@ -44,10 +44,25 @@ class PacificaExecutionEngine:
             "symbol": symbol.upper(),
             "amount": formatted_size,
             "side": pacifica_side,
-            "slippage_percent": 0.5,  # Numeric value as per docs
+            "slippage_percent": "1",  # String type required by Pacifica API
             "reduce_only": False,
             "client_order_id": client_order_id
         }
+
+        # Inline TP/SL with the market order (per docs, avoids separate call)
+        if sl_pips > 0:
+            sl_price = entry_price - sl_pips if side.upper() == "LONG" else entry_price + sl_pips
+            operation_data["stop_loss"] = {
+                "stop_price": f"{sl_price:.2f}",
+                "limit_price": f"{(sl_price * (0.999 if side.upper() == 'LONG' else 1.001)):.2f}"
+            }
+
+        if tp_pips > 0:
+            tp_price = entry_price + tp_pips if side.upper() == "LONG" else entry_price - tp_pips
+            operation_data["take_profit"] = {
+                "stop_price": f"{tp_price:.2f}",
+                "limit_price": f"{(tp_price * (1.001 if side.upper() == 'LONG' else 0.999)):.2f}"
+            }
 
         signed_payload = self.client.sign_payload("create_market_order", operation_data)
         
@@ -55,56 +70,16 @@ class PacificaExecutionEngine:
         logger.info(f"Pacifica: Pushing {formatted_size} {symbol} {side} Market Order (Max Loss: ${max_loss_usd})")
         
         try:
-            resp = await asyncio.to_thread(requests.post, f"{PACIFICA_REST_URL}/api/v1/orders/create_market", json=signed_payload, timeout=5)
+            resp = await asyncio.to_thread(requests.post, f"{PACIFICA_REST_URL}/api/v1/orders/create_market", json=signed_payload, timeout=10)
             if resp.status_code == 200:
                 data = resp.json()
-                if not data.get("success", True) and "code" not in data: # Usually pacifica returns success or code=200
-                     logger.warning(f"Pacifica Execute WARNING: {data}")
+                logger.info(f"Pacifica Order Response: {data}")
+                return True
             else:
-                 logger.error(f"Pacifica Order Rejected: {resp.text}")
-                 return False
+                logger.error(f"Pacifica Order Rejected: {resp.text}")
+                return False
         except Exception as e:
             logger.error(f"Pacifica Execute Exception: {e}")
             return False
-
-        # If order was created, we need to apply TP/SL based on Pacifica's actual entry price.
-        # We will wait a little to ensure position is fully registered
-        await asyncio.sleep(1)
-        actual_price = self.client.get_price(symbol) # We approximate the filled price for simplicity, or we could fetch the order
-
-        await self._apply_tpsl(symbol, side, actual_price, sl_pips, tp_pips)
-        return True
-
-    async def _apply_tpsl(self, symbol: str, side: str, entry_price: float, sl_pips: float, tp_pips: float):
-        if sl_pips <= 0 and tp_pips <= 0:
-            return
-
-        sl_price = entry_price - sl_pips if side.upper() == "LONG" else entry_price + sl_pips
-        tp_price = entry_price + tp_pips if side.upper() == "LONG" else entry_price - tp_pips
-        
-        operation_data = {
-            "symbol": symbol.upper(),
-            "side": "ask" if side.upper() == "LONG" else "bid",
-        }
-        
-        if sl_pips > 0:
-            operation_data["stop_loss"] = {
-                "stop_price": f"{sl_price:.2f}",
-                "limit_price": f"{(sl_price * (0.999 if side.upper() == 'LONG' else 1.001)):.2f}"
-            }
-            
-        if tp_pips > 0:
-            operation_data["take_profit"] = {
-                "stop_price": f"{tp_price:.2f}",
-                "limit_price": f"{(tp_price * (0.995 if side.upper() == 'LONG' else 1.005)):.2f}"
-            }
-
-        signed_payload = self.client.sign_payload("set_position_tpsl", operation_data)
-        
-        try:
-            resp = await asyncio.to_thread(requests.post, f"{PACIFICA_REST_URL}/api/v1/positions/tpsl", json=signed_payload, timeout=5)
-            logger.info(f"Set TP/SL: {resp.status_code} - {resp.text}")
-        except Exception as e:
-            logger.error(f"Pacifica Set TP/SL Error: {e}")
 
 pacifica_executor = PacificaExecutionEngine()

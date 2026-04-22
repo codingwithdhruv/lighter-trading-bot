@@ -183,9 +183,9 @@ class DecibelExecutionEngine:
             logger.error(f"Decibel TP/SL failed: {result.get('error', 'unknown')}")
 
     def _resolve_market_name(self, symbol: str) -> str:
-        """Convert asset symbol to Decibel market name format."""
-        symbol = symbol.upper().replace("USDC", "").replace("USDT", "").replace(" PERP", "").replace("-", "").strip()
-        return f"{symbol}-USD"
+        """Convert asset symbol to Decibel market name format (e.g. BTC -> BTC/USD)."""
+        symbol = symbol.upper().replace("USDC", "").replace("USDT", "").replace(" PERP", "").replace("-", "").replace("/", "").strip()
+        return f"{symbol}/USD"
 
 
 decibel_executor = DecibelExecutionEngine()
