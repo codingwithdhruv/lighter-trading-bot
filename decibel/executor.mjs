@@ -68,14 +68,20 @@ async function main() {
     privateKey: new Ed25519PrivateKey(keyHex),
   });
 
-  const gas = new GasPriceManager(MAINNET_CONFIG);
+  let config = MAINNET_CONFIG;
+  const GAS_STATION_KEY = process.env.DECIBEL_GAS_STATION_KEY;
+  if (GAS_STATION_KEY) {
+    config = { ...MAINNET_CONFIG, gasStationApiKey: GAS_STATION_KEY };
+  }
+
+  const gas = new GasPriceManager(config);
   await gas.initialize();
 
-  const read = new DecibelReadDex(MAINNET_CONFIG, {
+  const read = new DecibelReadDex(config, {
     nodeApiKey: NODE_API_KEY,
   });
 
-  const write = new DecibelWriteDex(MAINNET_CONFIG, account, {
+  const write = new DecibelWriteDex(config, account, {
     nodeApiKey: NODE_API_KEY,
     gasPriceManager: gas,
     skipSimulate: false,

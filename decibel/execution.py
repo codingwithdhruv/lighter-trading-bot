@@ -109,6 +109,24 @@ class DecibelExecutionEngine:
         chain_price = round_to_tick(amount_to_chain_units(order_price, px_decimals), tick_size)
         chain_size = round_to_lot(amount_to_chain_units(position_size, sz_decimals), lot_size, min_size)
 
+        # Calculate TP/SL prices and convert to chain units
+        tp_chain = None
+        sl_chain = None
+        if sl_pips > 0 or tp_pips > 0:
+            tp_price = 0.0
+            sl_price = 0.0
+            if is_buy:
+                if tp_pips > 0: tp_price = entry_price + tp_pips
+                if sl_pips > 0: sl_price = entry_price - sl_pips
+            else:
+                if tp_pips > 0: tp_price = entry_price - tp_pips
+                if sl_pips > 0: sl_price = entry_price + sl_pips
+
+            if tp_price > 0:
+                tp_chain = round_to_tick(amount_to_chain_units(tp_price, px_decimals), tick_size)
+            if sl_price > 0:
+                sl_chain = round_to_tick(amount_to_chain_units(sl_price, px_decimals), tick_size)
+
         logger.info(
             f"Decibel: Placing {side} {market_name} | "
             f"size={position_size:.6f} (chain={chain_size}) | "
@@ -122,6 +140,10 @@ class DecibelExecutionEngine:
             price=chain_price,
             size=chain_size,
             is_buy=is_buy,
+            tp_trigger=tp_chain,
+            tp_limit=tp_chain,
+            sl_trigger=sl_chain,
+            sl_limit=sl_chain
         )
 
         if not result.get("success"):
@@ -130,73 +152,7 @@ class DecibelExecutionEngine:
 
         tx_hash = result.get("transactionHash", "N/A")
         logger.info(f"Decibel order placed. TxHash: {tx_hash}")
-        
-        # Spawn background TP/SL monitor task if needed
-        if sl_pips > 0 or tp_pips > 0:
-            tp_price = 0.0
-            sl_price = 0.0
-            if side.upper() == "LONG":
-                if tp_pips > 0: tp_price = entry_price + tp_pips
-                if sl_pips > 0: sl_price = entry_price - sl_pips
-            else:
-                if tp_pips > 0: tp_price = entry_price - tp_pips
-                if sl_pips > 0: sl_price = entry_price + sl_pips
-                
-            asyncio.create_task(self._monitor_tpsl(symbol, side, tp_price, sl_price, notification_callback))
-            
         return True
-
-    async def _monitor_tpsl(self, symbol: str, side: str, tp_price: float, sl_price: float, notification_callback=None):
-        """Continuously monitor mark price to trigger local limit close loop on TP/SL hits."""
-        logger.info(f"Decibel: Started background TP/SL monitor for {symbol}. TP={tp_price}, SL={sl_price}")
-        is_long = side.upper() == "LONG"
-        
-        while True:
-            await asyncio.sleep(2)
-            
-            # 1. Fetch current position to ensure it hasn't been closed by UI tracking
-            positions = self.client.get_positions(symbol)
-            if not positions:
-                logger.info(f"Decibel: Position {symbol} closed externally. Stopping TP/SL monitor.")
-                break
-                
-            pos = positions[0]
-            current_amount = float(pos.get("position_size", pos.get("size", "0")))
-            if current_amount == 0:
-                logger.info(f"Decibel: Position {symbol} closed externally. Stopping TP/SL monitor.")
-                break
-                
-            current_price = self.client.get_price(symbol)
-            if current_price <= 0:
-                continue
-                
-            triggered = False
-            trigger_type = ""
-            
-            if is_long:
-                if tp_price and current_price >= tp_price:
-                    triggered = True
-                    trigger_type = "TP"
-                elif sl_price and current_price <= sl_price:
-                    triggered = True
-                    trigger_type = "SL"
-            else:
-                if tp_price and current_price <= tp_price:
-                    triggered = True
-                    trigger_type = "TP"
-                elif sl_price and current_price >= sl_price:
-                    triggered = True
-                    trigger_type = "SL"
-                    
-            if triggered:
-                msg = f"🔔 *Decibel {trigger_type} Hit* for {symbol} at ${current_price:,.2f}!\nStarting mid-price limit closing loop..."
-                logger.info(msg)
-                if notification_callback:
-                    await notification_callback(msg)
-                    
-                # Execute 100% close
-                await self.execute_close_trade(symbol, side, 1.0, notification_callback)
-                break
 
     async def execute_close_trade(self, symbol: str, side: str, percent_closed: float, notification_callback=None) -> bool:
         """Close a position using a mid-price limit order repricing loop on Decibel."""

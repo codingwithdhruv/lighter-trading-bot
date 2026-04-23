@@ -55,6 +55,17 @@ class PacificaExecutionEngine:
         # Generate client order ID
         client_order_id = str(uuid.uuid4())
 
+        # Calculate TP/SL prices
+        tp_price = None
+        sl_price = None
+        if sl_pips > 0 or tp_pips > 0:
+            if side.upper() == "LONG":
+                if tp_pips > 0: tp_price = entry_price + tp_pips
+                if sl_pips > 0: sl_price = entry_price - sl_pips
+            else:
+                if tp_pips > 0: tp_price = entry_price - tp_pips
+                if sl_pips > 0: sl_price = entry_price + sl_pips
+
         # 3. Create exact market order parameters
         operation_data = {
             "symbol": symbol.upper(),
@@ -65,8 +76,19 @@ class PacificaExecutionEngine:
             "client_order_id": client_order_id
         }
 
+        # Add native take_profit and stop_loss if defined
+        if tp_price:
+            operation_data["take_profit"] = {
+                "stop_price": str(round(tp_price)),
+                "limit_price": str(round(tp_price))
+            }
+        if sl_price:
+            operation_data["stop_loss"] = {
+                "stop_price": str(round(sl_price)),
+                "limit_price": str(round(sl_price))
+            }
+
         # Inline TP/SL with the market order (per docs, avoids separate call)
-        # Prices must be multiples of tick size (1 for BTC), so round to integers
         signed_payload = self.client.sign_payload("create_market_order", operation_data)
         
         # 4. Execute the market order
@@ -77,20 +99,6 @@ class PacificaExecutionEngine:
             if resp.status_code == 200:
                 data = resp.json()
                 logger.info(f"Pacifica Order Response: {data}")
-                
-                # Spawn background TP/SL monitor task if needed
-                if sl_pips > 0 or tp_pips > 0:
-                    tp_price = 0.0
-                    sl_price = 0.0
-                    if side.upper() == "LONG":
-                        if tp_pips > 0: tp_price = entry_price + tp_pips
-                        if sl_pips > 0: sl_price = entry_price - sl_pips
-                    else:
-                        if tp_pips > 0: tp_price = entry_price - tp_pips
-                        if sl_pips > 0: sl_price = entry_price + sl_pips
-                        
-                    asyncio.create_task(self._monitor_tpsl(symbol, side, tp_price, sl_price, notification_callback))
-                
                 return True
             else:
                 logger.error(f"Pacifica Order Rejected: {resp.text}")
@@ -98,52 +106,6 @@ class PacificaExecutionEngine:
         except Exception as e:
             logger.error(f"Pacifica Execute Exception: {e}")
             return False
-
-    async def _monitor_tpsl(self, symbol: str, side: str, tp_price: float, sl_price: float, notification_callback=None):
-        """Continuously monitor mark price to trigger local limit close loop on TP/SL hits."""
-        logger.info(f"Pacifica: Started background TP/SL monitor for {symbol}. TP={tp_price}, SL={sl_price}")
-        is_long = side.upper() == "LONG"
-        
-        while True:
-            await asyncio.sleep(2)
-            
-            # 1. Fetch current position to ensure it hasn't been closed by UI tracking
-            positions = self.client.get_positions(symbol)
-            if not positions or float(positions[0].get("amount", "0")) <= 0:
-                logger.info(f"Pacifica: Position {symbol} closed externally. Stopping TP/SL monitor.")
-                break
-                
-            current_price = self.client.get_price(symbol)
-            if current_price <= 0:
-                continue
-                
-            triggered = False
-            trigger_type = ""
-            
-            if is_long:
-                if tp_price and current_price >= tp_price:
-                    triggered = True
-                    trigger_type = "TP"
-                elif sl_price and current_price <= sl_price:
-                    triggered = True
-                    trigger_type = "SL"
-            else:
-                if tp_price and current_price <= tp_price:
-                    triggered = True
-                    trigger_type = "TP"
-                elif sl_price and current_price >= sl_price:
-                    triggered = True
-                    trigger_type = "SL"
-                    
-            if triggered:
-                msg = f"🔔 *Pacifica {trigger_type} Hit* for {symbol} at ${current_price:,.2f}!\nStarting mid-price limit closing loop..."
-                logger.info(msg)
-                if notification_callback:
-                    await notification_callback(msg)
-                    
-                # Execute 100% close
-                await self.execute_close_trade(symbol, side, 1.0, notification_callback)
-                break
 
     async def execute_close_trade(self, symbol: str, side: str, percent_closed: float, notification_callback=None) -> bool:
         """Close a position using a mid-price limit order repricing loop."""
