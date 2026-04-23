@@ -218,10 +218,10 @@ class PacificaExecutionEngine:
                 "client_order_id": client_order_id
             }
             
-            signed_payload = self.client.sign_payload("create_limit_order", operation_data)
+            signed_payload = self.client.sign_payload("create_order", operation_data)
             
             try:
-                resp = await asyncio.to_thread(requests.post, f"{PACIFICA_REST_URL}/api/v1/orders/create_limit", json=signed_payload, timeout=5)
+                resp = await asyncio.to_thread(requests.post, f"{PACIFICA_REST_URL}/api/v1/orders/create", json=signed_payload, timeout=5)
                 if resp.status_code == 200:
                     data = resp.json()
                     order_id = data.get("data", {}).get("order_id") or data.get("order_id")
