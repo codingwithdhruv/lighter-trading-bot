@@ -77,18 +77,33 @@ class PositionTracker:
                 await asyncio.sleep(5)
 
     async def _handle_positions_snapshot(self, positions: dict):
-        for market_idx_str, pos in positions.items():
-            self._positions_cache[market_idx_str] = float(pos.get("position", "0"))
+        for market_idx_str, pos_data in positions.items():
+            size = float(pos_data.get("position", "0"))
+            pos_side = pos_data.get("position_side", pos_data.get("side", ""))
+            if pos_side:
+                size = abs(size) if pos_side.lower() in ["long", "buy"] else -abs(size)
+            self._positions_cache[market_idx_str] = size
 
     async def _handle_positions_update(self, positions: dict):
         for market_idx_str, pos_data in positions.items():
             new_size_str = pos_data.get("position", "0")
             new_size = float(new_size_str)
+            
+            # Explicitly apply mathematical sign based on explicit side payload if available
+            pos_side = pos_data.get("position_side", pos_data.get("side", ""))
+            if pos_side:
+                new_size = abs(new_size) if pos_side.lower() in ["long", "buy"] else -abs(new_size)
+                
             old_size = self._positions_cache.get(market_idx_str, 0.0)
             
             if abs(new_size) > abs(old_size):
                 symbol = pos_data.get("symbol", "UNKNOWN").split('-')[0]  # BTC-USD -> BTC
-                side = "LONG" if new_size > old_size else "SHORT"
+                
+                if pos_side:
+                    side = "LONG" if pos_side.lower() in ["long", "buy"] else "SHORT"
+                else:
+                    side = "LONG" if new_size > old_size else "SHORT"
+                    
                 entry_price = float(pos_data.get("avg_entry_price", "0"))
                 
                 normalized = symbol.upper().replace("USDC", "").replace("USDT", "").replace(" PERP", "").replace("-", "").strip()
