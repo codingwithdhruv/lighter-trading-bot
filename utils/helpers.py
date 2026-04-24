@@ -24,12 +24,17 @@ def detect_tp_sl_from_orders(orders: list, is_long: bool) -> tuple:
       - "take-profit", "take-profit-limit" 
       - "stop-loss", "stop-loss-limit"
     And price fields as: "trigger_price", "price" (both as strings)
+    Each order also has "is_ask" (bool): true = sell, false = buy.
+    TP/SL orders are reduce-only on the OPPOSITE side of the position:
+      - is_ask=true (sell) → position is LONG
+      - is_ask=false (buy) → position is SHORT
     
     Returns:
-        (tp_price, sl_price) as floats. Returns 0.0 if not found.
+        (tp_price, sl_price, inferred_side) where inferred_side is "LONG", "SHORT", or "" if unknown.
     """
     tp_price = 0.0
     sl_price = 0.0
+    inferred_side = ""
     
     for o in orders:
         otype = str(o.get('type', '')).lower()
@@ -40,11 +45,22 @@ def detect_tp_sl_from_orders(orders: list, is_long: bool) -> tuple:
         if price == 0:
             continue
         
+        is_tpsl = False
         # Match hyphenated Lighter API type names
         if 'take-profit' in otype or 'take_profit' in otype.replace('-', '_') or otype in ('4', '5'):
             tp_price = price
+            is_tpsl = True
         elif 'stop-loss' in otype or 'stop_loss' in otype.replace('-', '_') or otype in ('2', '3'):
             sl_price = price
+            is_tpsl = True
+        
+        # Infer position side from TP/SL order's is_ask field
+        # TP/SL sell order (is_ask=true) → closing a LONG position
+        # TP/SL buy order (is_ask=false) → closing a SHORT position
+        if is_tpsl and not inferred_side:
+            is_ask = o.get('is_ask')
+            if is_ask is not None:
+                inferred_side = "LONG" if is_ask else "SHORT"
     
     # Fallback heuristic if order types aren't explicitly labeled
     if tp_price == 0 and sl_price == 0 and len(orders) >= 2:
@@ -57,5 +73,5 @@ def detect_tp_sl_from_orders(orders: list, is_long: bool) -> tuple:
                 tp_price = prices[0]    # Lower = TP for short
                 sl_price = prices[-1]   # Higher = SL for short
     
-    return tp_price, sl_price
+    return tp_price, sl_price, inferred_side
 

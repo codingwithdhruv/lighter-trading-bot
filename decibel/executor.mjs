@@ -64,14 +64,37 @@ async function main() {
   if (keyHex.startsWith("ed25519-priv-")) {
     keyHex = keyHex.replace("ed25519-priv-", "");
   }
+  // Ensure 0x prefix
+  if (!keyHex.startsWith("0x")) {
+    keyHex = "0x" + keyHex;
+  }
   const account = new Ed25519Account({
     privateKey: new Ed25519PrivateKey(keyHex),
   });
+
+  // Derive the primary subaccount address (deterministic from API wallet)
+  let derivedSubaccount = "";
+  try {
+    derivedSubaccount = getPrimarySubaccountAddr(account.accountAddress).toString();
+  } catch (e) {
+    process.stderr.write(`[Decibel] Warning: Could not derive primary subaccount: ${e.message}\n`);
+  }
+
+  const envSubaccount = process.env.DECIBEL_SUBACCOUNT || "";
+
+  // Log diagnostics
+  process.stderr.write(`[Decibel] API Wallet (signer): ${account.accountAddress.toString()}\n`);
+  process.stderr.write(`[Decibel] Primary subaccount (derived): ${derivedSubaccount}\n`);
+  process.stderr.write(`[Decibel] Env DECIBEL_SUBACCOUNT: ${envSubaccount || "(not set)"}\n`);
+  process.stderr.write(`[Decibel] Private key format: ${PRIVATE_KEY.slice(0, 15)}...\n`);
 
   let config = MAINNET_CONFIG;
   const GAS_STATION_KEY = process.env.DECIBEL_GAS_STATION_KEY;
   if (GAS_STATION_KEY) {
     config = { ...MAINNET_CONFIG, gasStationApiKey: GAS_STATION_KEY };
+    process.stderr.write(`[Decibel] Gas Station ENABLED (key: ${GAS_STATION_KEY.slice(0, 8)}...)\n`);
+  } else {
+    process.stderr.write(`[Decibel] Gas Station DISABLED — APT needed at: ${account.accountAddress.toString()}\n`);
   }
 
   const gas = new GasPriceManager(config);

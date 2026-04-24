@@ -744,7 +744,7 @@ class TelegramBotHandler:
                     text += f"└ Realized: `${realized_pnl:,.2f}`\n"
                 
                 # Detect TP/SL from active orders
-                tp_price, sl_price = detect_tp_sl_from_orders(
+                tp_price, sl_price, _ = detect_tp_sl_from_orders(
                     active_orders.get(pos.market_id, []), is_long
                 )
                 
@@ -1124,7 +1124,7 @@ class TelegramBotHandler:
                 orders_raw = await orders_resp.json()
                 market_orders = [o for o in orders_raw.get('orders', []) if o.get('market_id') == target_pos.market_id]
                 is_long = float(target_pos.position) > 0
-                tp_price, sl_price = self._detect_tp_sl_from_orders(market_orders, is_long)
+                tp_price, sl_price, _ = detect_tp_sl_from_orders(market_orders, is_long)
             except Exception: pass
 
             text = self._format_position_card_text_refresh(target_pos, mark_price, tp_price, sl_price)

@@ -79,31 +79,18 @@ class PositionTracker:
     async def _handle_positions_snapshot(self, positions: dict):
         for market_idx_str, pos_data in positions.items():
             size = float(pos_data.get("position", "0"))
-            pos_side = pos_data.get("position_side", pos_data.get("side", ""))
-            if pos_side:
-                size = abs(size) if pos_side.lower() in ["long", "buy"] else -abs(size)
-            self._positions_cache[market_idx_str] = size
+            # Cache as positive — we track direction separately via TP/SL discovery
+            self._positions_cache[market_idx_str] = abs(size)
 
     async def _handle_positions_update(self, positions: dict):
         for market_idx_str, pos_data in positions.items():
             new_size_str = pos_data.get("position", "0")
-            new_size = float(new_size_str)
+            new_size = abs(float(new_size_str))  # Always use absolute value
+            old_size = abs(self._positions_cache.get(market_idx_str, 0.0))
             
-            # Explicitly apply mathematical sign based on explicit side payload if available
-            pos_side = pos_data.get("position_side", pos_data.get("side", ""))
-            if pos_side:
-                new_size = abs(new_size) if pos_side.lower() in ["long", "buy"] else -abs(new_size)
-                
-            old_size = self._positions_cache.get(market_idx_str, 0.0)
-            
-            if abs(new_size) > abs(old_size):
+            if new_size > old_size:
+                # Position increased — new trade opened or added to
                 symbol = pos_data.get("symbol", "UNKNOWN").split('-')[0]  # BTC-USD -> BTC
-                
-                if pos_side:
-                    side = "LONG" if pos_side.lower() in ["long", "buy"] else "SHORT"
-                else:
-                    side = "LONG" if new_size > old_size else "SHORT"
-                    
                 entry_price = float(pos_data.get("avg_entry_price", "0"))
                 
                 normalized = symbol.upper().replace("USDC", "").replace("USDT", "").replace(" PERP", "").replace("-", "").strip()
@@ -113,7 +100,11 @@ class PositionTracker:
                     self._positions_cache[market_idx_str] = new_size
                     continue
                 
-                tp_pips, sl_pips = await self._discover_tpsl_pips(market_idx_str, side, entry_price)
+                # Discover TP/SL FIRST (side-agnostic), then infer direction from order data
+                tp_pips, sl_pips, tp_price, sl_price, order_side = await self._discover_tpsl_pips(market_idx_str, entry_price)
+                
+                # Infer trade direction: is_ask from TP/SL orders is primary signal
+                side = self._infer_side_from_tpsl(entry_price, tp_price, sl_price, order_side)
                 
                 msg = f"🛰️ *UI Trade Detected:* {side} {symbol} @ {entry_price}"
                 if sl_pips > 0: msg += f"\n🛡️ SL: {sl_pips:.2f} pips"
@@ -130,7 +121,7 @@ class PositionTracker:
                     sl_pips=sl_pips,
                     tp_pips=tp_pips
                 )
-            elif abs(new_size) < abs(old_size):
+            elif new_size < old_size:
                 # Position was reduced or closed
                 from core.config_manager import config_manager
                 
@@ -142,8 +133,12 @@ class PositionTracker:
                         logger.info(f"WS Tracker ignoring bot-executed close for {symbol}")
                         self._bot_executed_markets.discard(normalized)
                     else:
-                        percent_closed = (abs(old_size) - abs(new_size)) / abs(old_size)
-                        original_side = "LONG" if old_size > 0 else "SHORT"
+                        percent_closed = (old_size - new_size) / old_size
+                        # For closures, we need to know the original side.
+                        # Use TP/SL discovery on the remaining position (if any) or cache.
+                        entry_price = float(pos_data.get("avg_entry_price", "0"))
+                        _, _, tp_price, sl_price, order_side = await self._discover_tpsl_pips(market_idx_str, entry_price)
+                        original_side = self._infer_side_from_tpsl(entry_price, tp_price, sl_price, order_side)
                         
                         logger.info(f"Lighter WS Detected UI Close: {percent_closed*100:.1f}% of {original_side} {symbol}")
                         
@@ -158,8 +153,39 @@ class PositionTracker:
                 
             self._positions_cache[market_idx_str] = new_size
 
-    async def _discover_tpsl_pips(self, market_idx: str, side: str, entry_price: float) -> tuple[float, float]:
-        """Fetch active TP/SL orders from Lighter and convert to pip distances."""
+    def _infer_side_from_tpsl(self, entry_price: float, tp_price: float, sl_price: float, order_inferred_side: str = "") -> str:
+        """Infer trade direction from TP/SL order data.
+        
+        Priority:
+        1. Direct signal from TP/SL order's is_ask field (most reliable)
+        2. TP/SL prices relative to entry (fallback)
+        """
+        # Priority 1: Direct from is_ask on the TP/SL order
+        if order_inferred_side in ("LONG", "SHORT"):
+            return order_inferred_side
+        
+        # Priority 2: TP/SL price relative to entry
+        if tp_price > 0 and entry_price > 0:
+            if tp_price < entry_price:
+                return "SHORT"
+            elif tp_price > entry_price:
+                return "LONG"
+        
+        if sl_price > 0 and entry_price > 0:
+            if sl_price > entry_price:
+                return "SHORT"
+            elif sl_price < entry_price:
+                return "LONG"
+        
+        # If no TP/SL data at all, default to LONG (should be very rare)
+        logger.warning(f"Could not infer side from TP/SL. TP={tp_price}, SL={sl_price}, Entry={entry_price}. Defaulting to LONG.")
+        return "LONG"
+
+    async def _discover_tpsl_pips(self, market_idx: str, entry_price: float) -> tuple[float, float, float, float, str]:
+        """Fetch active TP/SL orders from Lighter and convert to pip distances.
+        
+        Returns: (tp_pips, sl_pips, tp_price, sl_price, inferred_side)
+        """
         try:
             from lighter.api.order_api import OrderApi
             from utils.helpers import detect_tp_sl_from_orders
@@ -167,7 +193,6 @@ class PositionTracker:
             order_api = OrderApi(lighter_wrapper.api_client)
             market_id = int(market_idx)
             auth_token = lighter_wrapper.get_auth_token()
-            is_long = side.upper() == "LONG"
             
             resp = await order_api.account_active_orders_without_preload_content(
                 market_id=market_id, account_index=LIGHTER_ACCOUNT_INDEX, auth=auth_token
@@ -177,16 +202,16 @@ class PositionTracker:
             # The API returns a flat list of orders under 'orders' key
             orders = data.get('orders', [])
             
-            # Reuse the proven helper that the Position HUD already uses
-            tp_price, sl_price = detect_tp_sl_from_orders(orders, is_long)
+            # is_long=True for the primary pass (type-matching doesn't depend on side)
+            tp_price, sl_price, inferred_side = detect_tp_sl_from_orders(orders, True)
             
             tp_pips = abs(tp_price - entry_price) if tp_price > 0 and entry_price > 0 else 0.0
             sl_pips = abs(sl_price - entry_price) if sl_price > 0 and entry_price > 0 else 0.0
             
-            logger.info(f"TP/SL Discovery for Market {market_idx}: TP=${tp_price} ({tp_pips:.1f}p), SL=${sl_price} ({sl_pips:.1f}p)")
-            return tp_pips, sl_pips
+            logger.info(f"TP/SL Discovery for Market {market_idx}: TP=${tp_price} ({tp_pips:.1f}p), SL=${sl_price} ({sl_pips:.1f}p), Side={inferred_side or 'unknown'}")
+            return tp_pips, sl_pips, tp_price, sl_price, inferred_side
         except Exception as e:
             logger.error(f"Failed to fetch TP/SL orders for Market {market_idx}: {e}")
-            return 0.0, 0.0
+            return 0.0, 0.0, 0.0, 0.0, ""
 
 lighter_position_tracker = PositionTracker()
