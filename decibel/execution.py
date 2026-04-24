@@ -162,8 +162,8 @@ class DecibelExecutionEngine:
             return True
             
         pos = positions[0]
-        # Decibel REST position object typically has 'position_size' or 'size'
-        current_size_str = pos.get("position_size", pos.get("size", "0"))
+        # Decibel /api/v1/account_positions returns 'open_size' for position size
+        current_size_str = pos.get("open_size", pos.get("position_size", pos.get("size", "0")))
         current_amount = float(current_size_str)
         
         if current_amount <= 0:
@@ -247,7 +247,7 @@ class DecibelExecutionEngine:
             if not current_positions:
                 return True
                 
-            new_amount_str = current_positions[0].get("position_size", current_positions[0].get("size", "0"))
+            new_amount_str = current_positions[0].get("open_size", current_positions[0].get("position_size", current_positions[0].get("size", "0")))
             new_amount_abs = abs(float(new_amount_str))
             
             filled_this_loop = current_amount_abs - new_amount_abs
