@@ -1,6 +1,7 @@
 import asyncio
 from pacifica.execution import pacifica_executor
 from decibel.execution import decibel_executor
+from trading.lighter_copy_executor import lighter_copy_executor
 from core.config_manager import config_manager
 from utils.logger import logger
 
@@ -49,6 +50,20 @@ class CopyEngine:
                 notification_callback=self.notification_callback
             ))
 
+        # Route to Lighter Copy
+        if config_manager.lighter_copy_enabled:
+            exchange_names.append("LighterCopy")
+            logger.info(f"CopyEngine: Routing {side} {symbol} to LighterCopy -> max_loss=${config_manager.lighter_copy_max_loss_usd}, lev={config_manager.lighter_copy_leverage}x")
+            tasks.append(lighter_copy_executor.execute_copy_trade(
+                symbol=symbol,
+                side=side,
+                sl_pips=sl_pips,
+                max_loss_usd=config_manager.lighter_copy_max_loss_usd,
+                leverage=config_manager.lighter_copy_leverage,
+                tp_pips=tp_pips,
+                notification_callback=self.notification_callback
+            ))
+
         if tasks:
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for i, res in enumerate(results):
@@ -92,6 +107,16 @@ class CopyEngine:
                 notification_callback=self.notification_callback
             ))
 
+        if config_manager.lighter_copy_enabled:
+            exchange_names.append("LighterCopy")
+            logger.info(f"CopyEngine: Routing close signal for {symbol} to LighterCopy ({percent_closed*100:.1f}%)")
+            tasks.append(lighter_copy_executor.execute_close_trade(
+                symbol=symbol,
+                side=side,
+                percent_closed=percent_closed,
+                notification_callback=self.notification_callback
+            ))
+
         if tasks:
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for i, res in enumerate(results):
@@ -110,5 +135,18 @@ class CopyEngine:
                         await self.notification_callback(f"✅ {ex_name} Close Successful")
         else:
             logger.info("CopyEngine: No copy targets enabled for close.")
+
+    async def process_sl_tp_update(self, symbol: str, side: str, sl_pips: float, tp_pips: float):
+        """Sync SL/TP mid-trade across copy targets."""
+        logger.info(f"CopyEngine: Processing mid-trade SL/TP sync for {symbol} (SL: {sl_pips}, TP: {tp_pips})")
+        
+        if config_manager.lighter_copy_enabled:
+            await lighter_copy_executor.sync_sl_tp(
+                symbol=symbol,
+                side=side,
+                sl_pips=sl_pips,
+                tp_pips=tp_pips
+            )
+        # Note: Pacifica/Decibel executors could also implement sync_sl_tp if desired.
 
 copy_engine = CopyEngine()

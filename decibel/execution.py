@@ -258,11 +258,15 @@ class DecibelExecutionEngine:
         return False
 
     def _resolve_market_name(self, symbol: str) -> str:
-        """Convert asset symbol to Decibel SDK market name format (e.g. BTC -> BTC-USD).
-        The SDK placeOrder uses hyphenated format: BTC-USD.
+        """Convert asset symbol to Decibel on-chain market name format (e.g. BTC -> BTC/USD).
+        
+        IMPORTANT: Decibel on-chain markets use SLASH format: BTC/USD, ETH/USD, etc.
+        The SDK derives the market object address by hashing this exact string,
+        so using 'BTC-USD' instead of 'BTC/USD' produces a completely different
+        (non-existent) address and causes EOBJECT_DOES_NOT_EXIST errors.
         """
         symbol = symbol.upper().replace("USDC", "").replace("USDT", "").replace(" PERP", "").replace("-", "").replace("/", "").strip()
-        return f"{symbol}-USD"
+        return f"{symbol}/USD"
 
 
 decibel_executor = DecibelExecutionEngine()

@@ -21,11 +21,24 @@ class BotApplication:
             logger.info("Initializing configuration...")
             validate_config()
 
-            logger.info("Initializing Lighter Trading SDK...")
+            logger.info("Initializing Lighter Trading SDK (Main)...")
             err = lighter_wrapper.initialize()
             if err:
-                logger.error("Failed to initialize system due to Lighter setup errors.")
+                logger.error("Failed to initialize Lighter (Main) setup errors.")
                 sys.exit(1)
+
+            logger.info("Initializing Lighter Trading SDK (Copy)...")
+            from utils.config import COPY_LIGHTER_PRIVATE_KEY, COPY_LIGHTER_ACCOUNT_INDEX, COPY_LIGHTER_API_KEY_INDEX
+            if COPY_LIGHTER_PRIVATE_KEY:
+                err = lighter_copy_wrapper.initialize(
+                    private_key=COPY_LIGHTER_PRIVATE_KEY,
+                    account_index=COPY_LIGHTER_ACCOUNT_INDEX,
+                    api_key_index=COPY_LIGHTER_API_KEY_INDEX
+                )
+                if err:
+                    logger.warning(f"Failed to initialize Lighter (Copy) account: {err}. Copying to Lighter will be disabled.")
+            else:
+                logger.info("Lighter Copy account not configured. Skipping.")
 
             logger.info("Initializing Market Registry...")
             success = await market_registry.initialize(lighter_wrapper.api_client)
@@ -112,6 +125,8 @@ class BotApplication:
             self.market_listener.stop()
         await lighter_position_tracker.stop()
         await lighter_wrapper.close()
+        from trading.lighter_client import lighter_copy_wrapper
+        await lighter_copy_wrapper.close()
 
 
 async def main():

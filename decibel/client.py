@@ -135,8 +135,11 @@ class DecibelClient:
             # If filtering by symbol, resolve to market_address
             if symbol:
                 market_addr = ""
+                sym_upper = symbol.upper()
+                # Try exact match, then common formats (BTC/USD, BTC-USD from raw BTC)
+                candidates = [sym_upper, f"{sym_upper}/USD", f"{sym_upper}-USD"]
                 for name, cfg in self._market_cache.items():
-                    if name.upper() == symbol.upper() or name.upper() == symbol.upper().replace("/", "-"):
+                    if name.upper() in candidates or name.upper().replace("/", "-") in candidates:
                         market_addr = cfg.get("market_addr", "")
                         break
                 if market_addr:

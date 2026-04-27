@@ -19,14 +19,70 @@ class PositionTracker:
         self._bot_executed_markets.add(normalized)
 
     async def start(self):
-        logger.info("Starting Lighter WebSocket Position Tracker...")
+        logger.info("Starting Lighter WebSocket Position Tracker and SL/TP Poller...")
         self._running = True
         self._task = asyncio.create_task(self._listen())
+        self._poll_task = asyncio.create_task(self._poll_tpsl_updates())
         
     async def stop(self):
         self._running = False
         if self._task:
             self._task.cancel()
+        if hasattr(self, '_poll_task') and self._poll_task:
+            self._poll_task.cancel()
+
+    async def _poll_tpsl_updates(self):
+        """Periodically check for SL/TP updates on open positions."""
+        await asyncio.sleep(10) # Initial delay
+        while self._running:
+            try:
+                # We iterate over positions we are currently tracking in self._positions
+                # This dict is populated by the _listen loop
+                for market_idx_str, pos_data in list(self._positions.items()):
+                    current_size = float(pos_data.get('position', '0'))
+                    if current_size == 0:
+                        continue
+                    
+                    market_idx = int(market_idx_str)
+                    entry_price = float(pos_data.get('avg_entry_price', '0'))
+                    
+                    # Fetch active orders for this market to discover TP/SL
+                    _, _, tp_price, sl_price, order_side = await self._discover_tpsl_pips(market_idx_str, entry_price)
+                    
+                    # Calculate current pips
+                    sl_pips = abs(entry_price - sl_price) if sl_price > 0 else 0
+                    tp_pips = abs(entry_price - tp_price) if tp_price > 0 else 0
+                    
+                    # Check if different from cached
+                    old_sl = pos_data.get('last_polled_sl_pips', sl_pips)
+                    old_tp = pos_data.get('last_polled_tp_pips', tp_pips)
+                    
+                    # We only care if it changed from what we previously knew
+                    if abs(sl_pips - old_sl) > 0.1 or abs(tp_pips - old_tp) > 0.1:
+                        symbol = pos_data.get('symbol', 'UNKNOWN').split('-')[0]
+                        side = self._infer_side_from_tpsl(entry_price, tp_price, sl_price, order_side)
+                        
+                        logger.info(f"LighterPositionTracker: Detected SL/TP change for {symbol}. SL: {old_sl}->{sl_pips}, TP: {old_tp}->{tp_pips}")
+                        
+                        # Update cache to prevent multiple triggers
+                        pos_data['last_polled_sl_pips'] = sl_pips
+                        pos_data['last_polled_tp_pips'] = tp_pips
+                        
+                        # Trigger sync
+                        from core.copy_engine import copy_engine
+                        await copy_engine.process_sl_tp_update(symbol, side, sl_pips, tp_pips)
+                        
+                        if self.notification_callback:
+                            await self.notification_callback(f"🔄 *SL/TP Sync Detected*\nAsset: {symbol}\nNew SL: {sl_pips:.2f}\nNew TP: {tp_pips:.2f}")
+                    else:
+                        # Update cache even if not changed to initialize
+                        pos_data['last_polled_sl_pips'] = sl_pips
+                        pos_data['last_polled_tp_pips'] = tp_pips
+
+            except Exception as e:
+                logger.error(f"LighterPositionTracker: Error in SL/TP poller: {e}")
+                
+            await asyncio.sleep(30) # Poll every 30 seconds
             
     async def _listen(self):
         while self._running:

@@ -239,16 +239,27 @@ async function main() {
 
         process.stderr.write(`[Decibel] Placing order: ${JSON.stringify(orderArgs)}\n`);
 
-        const result = await write.placeOrder(orderArgs);
+        let result;
+        try {
+          result = await write.placeOrder(orderArgs);
+        } catch (orderErr) {
+          // SDK may throw instead of returning {success: false}
+          const errMsg = orderErr.responseMessage || orderErr.message || String(orderErr);
+          process.stderr.write(`[Decibel] placeOrder threw: ${errMsg}\n`);
+          reply({ success: false, error: errMsg });
+          break;
+        }
 
         // Log the full result for debugging
         process.stderr.write(`[Decibel] placeOrder result: ${JSON.stringify(result)}\n`);
 
+        // Surface the actual error message from the result
+        const orderError = result.error || result.statusText || result.responseMessage || null;
         reply({
           success: result.success === true || !!(result.transactionHash || result.hash),
           orderId: result.orderId || null,
           transactionHash: result.transactionHash || result.hash || null,
-          error: result.error || null,
+          error: orderError,
         });
         break;
       }

@@ -82,6 +82,7 @@ class TelegramBotHandler:
         from core.config_manager import config_manager
         pacifica_status = "🟢 ON" if config_manager.pacifica_enabled else "🔴 OFF"
         decibel_status = "🟢 ON" if config_manager.decibel_enabled else "🔴 OFF"
+        lighter_status = "🟢 ON" if config_manager.lighter_copy_enabled else "🔴 OFF"
         ui_closes_status = "🟢 ON" if config_manager.track_ui_closures else "🔴 OFF"
         
         keyboard = [
@@ -90,6 +91,7 @@ class TelegramBotHandler:
                 InlineKeyboardButton(f"Decibel: {decibel_status}", callback_data='toggle_decibel'),
             ],
             [
+                InlineKeyboardButton(f"Lighter Copy: {lighter_status}", callback_data='toggle_lighter'),
                 InlineKeyboardButton(f"Track UI Closes: {ui_closes_status}", callback_data='toggle_uiclose'),
             ],
             [
@@ -99,6 +101,10 @@ class TelegramBotHandler:
             [
                 InlineKeyboardButton(f"D.Lev: {config_manager.decibel_leverage}x", callback_data='set_dlev'),
                 InlineKeyboardButton(f"D.Loss: ${config_manager.decibel_max_loss_usd}", callback_data='set_dmaxloss'),
+            ],
+            [
+                InlineKeyboardButton(f"L.Lev: {config_manager.lighter_copy_leverage}x", callback_data='set_llev'),
+                InlineKeyboardButton(f"L.Loss: ${config_manager.lighter_copy_max_loss_usd}", callback_data='set_lmaxloss'),
             ],
             [
                 InlineKeyboardButton("🏠 Main Menu", callback_data='menu'),
@@ -526,6 +532,11 @@ class TelegramBotHandler:
             new_state = config_manager.toggle_decibel()
             await query.answer(f"Decibel Copy: {'ENABLED' if new_state else 'DISABLED'}")
             await query.edit_message_reply_markup(reply_markup=self._get_settings_keyboard())
+        elif data == 'toggle_lighter':
+            from core.config_manager import config_manager
+            new_state = config_manager.toggle_lighter_copy()
+            await query.answer(f"Lighter Copy: {'ENABLED' if new_state else 'DISABLED'}")
+            await query.edit_message_reply_markup(reply_markup=self._get_settings_keyboard())
         elif data == 'toggle_uiclose':
             from core.config_manager import config_manager
             new_state = config_manager.toggle_track_ui_closures()
@@ -543,6 +554,12 @@ class TelegramBotHandler:
         elif data == 'set_dmaxloss':
             context.user_data['pending_setting'] = 'decibel_max_loss'
             await query.message.reply_text("💰 Enter new *Decibel Max Loss USD* (e.g., 50):", parse_mode='Markdown')
+        elif data == 'set_llev':
+            context.user_data['pending_setting'] = 'lighter_copy_leverage'
+            await query.message.reply_text("🔢 Enter new *Lighter Copy Leverage* (e.g., 20):", parse_mode='Markdown')
+        elif data == 'set_lmaxloss':
+            context.user_data['pending_setting'] = 'lighter_copy_max_loss'
+            await query.message.reply_text("💰 Enter new *Lighter Copy Max Loss USD* (e.g., 50):", parse_mode='Markdown')
         elif data == 'cancel_all_alerts':
             if self.app_context and self.app_context.market_listener:
                 self.app_context.market_listener.clear_price_alerts()
@@ -983,6 +1000,12 @@ class TelegramBotHandler:
                 elif pending == 'decibel_max_loss':
                     config_manager.decibel_max_loss_usd = val
                     label = "Decibel Max Loss"
+                elif pending == 'lighter_copy_leverage':
+                    config_manager.lighter_copy_leverage = int(val)
+                    label = "Lighter Copy Leverage"
+                elif pending == 'lighter_copy_max_loss':
+                    config_manager.lighter_copy_max_loss_usd = val
+                    label = "Lighter Copy Max Loss"
                 
                 context.user_data.pop('pending_setting')
                 await update.message.reply_text(f"✅ *{label}* updated to `{val}`", parse_mode='Markdown')

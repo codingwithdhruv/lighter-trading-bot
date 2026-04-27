@@ -16,6 +16,10 @@ class ConfigManager:
         self.decibel_enabled = True
         self.decibel_leverage = 40
         self.decibel_max_loss_usd = 20.0
+        # Lighter Copy settings
+        self.lighter_copy_enabled = True
+        self.lighter_copy_leverage = 40
+        self.lighter_copy_max_loss_usd = 20.0
         # UI Closure Tracking
         self.track_ui_closures = False
         self.load()
@@ -31,6 +35,9 @@ class ConfigManager:
                     self.decibel_enabled = data.get("decibel_enabled", self.decibel_enabled)
                     self.decibel_leverage = data.get("decibel_leverage", self.decibel_leverage)
                     self.decibel_max_loss_usd = data.get("decibel_max_loss_usd", self.decibel_max_loss_usd)
+                    self.lighter_copy_enabled = data.get("lighter_copy_enabled", self.lighter_copy_enabled)
+                    self.lighter_copy_leverage = data.get("lighter_copy_leverage", self.lighter_copy_leverage)
+                    self.lighter_copy_max_loss_usd = data.get("lighter_copy_max_loss_usd", self.lighter_copy_max_loss_usd)
                     self.track_ui_closures = data.get("track_ui_closures", self.track_ui_closures)
             except Exception as e:
                 logger.error(f"Failed to load copy settings: {e}")
@@ -46,6 +53,9 @@ class ConfigManager:
                     "decibel_enabled": self.decibel_enabled,
                     "decibel_leverage": self.decibel_leverage,
                     "decibel_max_loss_usd": self.decibel_max_loss_usd,
+                    "lighter_copy_enabled": self.lighter_copy_enabled,
+                    "lighter_copy_leverage": self.lighter_copy_leverage,
+                    "lighter_copy_max_loss_usd": self.lighter_copy_max_loss_usd,
                     "track_ui_closures": self.track_ui_closures
                 }, f, indent=4)
         except Exception as e:
@@ -60,6 +70,11 @@ class ConfigManager:
         self.decibel_enabled = not self.decibel_enabled
         self.save()
         return self.decibel_enabled
+
+    def toggle_lighter_copy(self) -> bool:
+        self.lighter_copy_enabled = not self.lighter_copy_enabled
+        self.save()
+        return self.lighter_copy_enabled
         
     def toggle_track_ui_closures(self) -> bool:
         self.track_ui_closures = not self.track_ui_closures
