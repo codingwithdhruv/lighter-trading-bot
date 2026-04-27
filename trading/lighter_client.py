@@ -10,7 +10,7 @@ class LighterTradingClient:
         self.signer_client = None
         self.name = name
     
-    def initialize(self, api_url=None, account_index=None, api_key_index=None, private_key=None) -> Optional[Exception]:
+    async def initialize(self, api_url=None, account_index=None, api_key_index=None, private_key=None) -> Optional[Exception]:
         try:
             from utils.config import LIGHTER_API_URL, LIGHTER_ACCOUNT_INDEX, LIGHTER_API_KEY_INDEX, LIGHTER_PRIVATE_KEY
             
@@ -27,7 +27,7 @@ class LighterTradingClient:
             # Derive account index if not provided
             if acc_idx is None and priv_key:
                 logger.info(f"Lighter Client ({self.name}): Deriving account index...")
-                acc_idx = asyncio.run(self._derive_account_index(priv_key))
+                acc_idx = await self._derive_account_index(priv_key)
                 if acc_idx is None:
                     return Exception("Failed to derive account index")
                 logger.info(f"Lighter Client ({self.name}): Derived account index: {acc_idx}")

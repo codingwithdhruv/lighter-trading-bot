@@ -6,7 +6,7 @@ from utils.logger import logger
 from bot.telegram_handler import TelegramBotHandler
 from bot.parser import TradeSignal
 from data.market_listener import MarketListener
-from trading.lighter_client import lighter_wrapper
+from trading.lighter_client import lighter_wrapper, lighter_copy_wrapper
 from trading.execution import execute_trade
 from trading.market_config import market_registry
 from lighter_listener.position_tracker import lighter_position_tracker
@@ -22,7 +22,7 @@ class BotApplication:
             validate_config()
 
             logger.info("Initializing Lighter Trading SDK (Main)...")
-            err = lighter_wrapper.initialize()
+            err = await lighter_wrapper.initialize()
             if err:
                 logger.error("Failed to initialize Lighter (Main) setup errors.")
                 sys.exit(1)
@@ -30,7 +30,7 @@ class BotApplication:
             logger.info("Initializing Lighter Trading SDK (Copy)...")
             from utils.config import COPY_LIGHTER_PRIVATE_KEY, COPY_LIGHTER_ACCOUNT_INDEX, COPY_LIGHTER_API_KEY_INDEX
             if COPY_LIGHTER_PRIVATE_KEY:
-                err = lighter_copy_wrapper.initialize(
+                err = await lighter_copy_wrapper.initialize(
                     private_key=COPY_LIGHTER_PRIVATE_KEY,
                     account_index=COPY_LIGHTER_ACCOUNT_INDEX,
                     api_key_index=COPY_LIGHTER_API_KEY_INDEX
