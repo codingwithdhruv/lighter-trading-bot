@@ -43,6 +43,10 @@ A high-fidelity, institutional-grade command center for the **Lighter** Orderboo
     cp .env.example .env
     # Fill in your keys, Lighter Account Index, and allowed Telegram IDs
     ```
+    *Optional:* If you don't know your Lighter Account Index, you can derive it using your Ethereum Address or L1 Private Key:
+    ```bash
+    python3 find_account_index.py <0x_L1_ADDRESS_OR_L1_PRIVATE_KEY>
+    ```
 
 4.  **Launch Terminal**:
     ```bash

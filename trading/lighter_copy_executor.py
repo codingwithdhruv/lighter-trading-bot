@@ -158,7 +158,7 @@ class LighterCopyExecutor:
         try:
             account_api = lighter.AccountApi(self.wrapper.api_client)
             auth = self.wrapper.get_auth_token()
-            resp = await account_api.account(by="index", value=str(self.wrapper.signer_client.account_index), _headers={"Authorization": auth})
+            resp = await account_api.account(by="index", value=str(self.wrapper.signer_client.account_index))
             
             position = None
             for p in resp.accounts[0].positions:
@@ -220,7 +220,7 @@ class LighterCopyExecutor:
         try:
             account_api = lighter.AccountApi(self.wrapper.api_client)
             auth = self.wrapper.get_auth_token()
-            resp = await account_api.account(by="index", value=str(self.wrapper.signer_client.account_index), _headers={"Authorization": auth})
+            resp = await account_api.account(by="index", value=str(self.wrapper.signer_client.account_index))
             
             position = None
             for p in resp.accounts[0].positions:

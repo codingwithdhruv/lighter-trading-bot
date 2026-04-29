@@ -483,7 +483,7 @@ class TelegramBotHandler:
             account_api_copy = lighter.AccountApi(lighter_copy_wrapper.api_client)
             auth_copy = lighter_copy_wrapper.get_auth_token()
             if auth_copy and lighter_copy_wrapper.signer_client:
-                acc_info_copy = await account_api_copy.account(by="index", value=str(lighter_copy_wrapper.signer_client.account_index), _headers={"Authorization": auth_copy})
+                acc_info_copy = await account_api_copy.account(by="index", value=str(lighter_copy_wrapper.signer_client.account_index))
                 shares['LighterCopy'] = float(acc_info_copy.accounts[0].total_asset_value) if acc_info_copy.accounts else 0.0
             else:
                 shares['LighterCopy'] = 0.0
