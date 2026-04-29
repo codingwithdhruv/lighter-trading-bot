@@ -142,11 +142,17 @@ class CopyEngine:
         
         if config_manager.lighter_copy_enabled:
             await lighter_copy_executor.sync_sl_tp(
-                symbol=symbol,
-                side=side,
-                sl_pips=sl_pips,
-                tp_pips=tp_pips
+                symbol=symbol, side=side, sl_pips=sl_pips, tp_pips=tp_pips
             )
-        # Note: Pacifica/Decibel executors could also implement sync_sl_tp if desired.
+            
+        if config_manager.pacifica_enabled:
+            await pacifica_executor.sync_sl_tp(
+                symbol=symbol, side=side, sl_pips=sl_pips, tp_pips=tp_pips
+            )
+            
+        if config_manager.decibel_enabled:
+            await decibel_executor.sync_sl_tp(
+                symbol=symbol, side=side, sl_pips=sl_pips, tp_pips=tp_pips
+            )
 
 copy_engine = CopyEngine()

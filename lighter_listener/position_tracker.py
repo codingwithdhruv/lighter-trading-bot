@@ -10,7 +10,7 @@ class PositionTracker:
     def __init__(self, notification_callback: Callable[[str], Awaitable[None]] = None):
         self._running = False
         self._task = None
-        self._positions_cache = {}
+        self._positions_cache = {}  # market_idx -> pos_data dict
         self._bot_executed_markets = set()
         self.notification_callback = notification_callback
         
@@ -38,7 +38,7 @@ class PositionTracker:
             try:
                 # We iterate over positions we are currently tracking in self._positions
                 # This dict is populated by the _listen loop
-                for market_idx_str, pos_data in list(self._positions.items()):
+                for market_idx_str, pos_data in list(self._positions_cache.items()):
                     current_size = float(pos_data.get('position', '0'))
                     if current_size == 0:
                         continue
@@ -54,8 +54,14 @@ class PositionTracker:
                     tp_pips = abs(entry_price - tp_price) if tp_price > 0 else 0
                     
                     # Check if different from cached
-                    old_sl = pos_data.get('last_polled_sl_pips', sl_pips)
-                    old_tp = pos_data.get('last_polled_tp_pips', tp_pips)
+                    # If not set yet, initialize to current so we don't trigger falsely on first poll
+                    if 'last_polled_sl_pips' not in pos_data:
+                        pos_data['last_polled_sl_pips'] = sl_pips
+                    if 'last_polled_tp_pips' not in pos_data:
+                        pos_data['last_polled_tp_pips'] = tp_pips
+                        
+                    old_sl = pos_data['last_polled_sl_pips']
+                    old_tp = pos_data['last_polled_tp_pips']
                     
                     # We only care if it changed from what we previously knew
                     if abs(sl_pips - old_sl) > 0.1 or abs(tp_pips - old_tp) > 0.1:
@@ -134,15 +140,16 @@ class PositionTracker:
 
     async def _handle_positions_snapshot(self, positions: dict):
         for market_idx_str, pos_data in positions.items():
-            size = float(pos_data.get("position", "0"))
-            # Cache as positive — we track direction separately via TP/SL discovery
-            self._positions_cache[market_idx_str] = abs(size)
+            # Cache the full position data
+            self._positions_cache[market_idx_str] = pos_data
 
     async def _handle_positions_update(self, positions: dict):
         for market_idx_str, pos_data in positions.items():
             new_size_str = pos_data.get("position", "0")
             new_size = abs(float(new_size_str))  # Always use absolute value
-            old_size = abs(self._positions_cache.get(market_idx_str, 0.0))
+            
+            old_pos_data = self._positions_cache.get(market_idx_str, {})
+            old_size = abs(float(old_pos_data.get("position", "0")))
             
             if new_size > old_size:
                 # Position increased — new trade opened or added to
@@ -153,7 +160,7 @@ class PositionTracker:
                 if normalized in self._bot_executed_markets:
                     logger.info(f"WS Tracker ignoring bot-executed trade for {symbol}")
                     self._bot_executed_markets.discard(normalized)
-                    self._positions_cache[market_idx_str] = new_size
+                    self._positions_cache[market_idx_str] = pos_data
                     continue
                 
                 # Discover TP/SL FIRST (side-agnostic), then infer direction from order data
@@ -170,6 +177,9 @@ class PositionTracker:
                     await self.notification_callback(msg)
                 
                 logger.info(f"Lighter WS Detected UI Trade: {side} {symbol} @ {entry_price}")
+                
+                pos_data['last_polled_sl_pips'] = sl_pips
+                pos_data['last_polled_tp_pips'] = tp_pips
                 
                 await copy_engine.process_copy_signal(
                     symbol=symbol,
@@ -207,7 +217,7 @@ class PositionTracker:
                             percent_closed=percent_closed
                         )
                 
-            self._positions_cache[market_idx_str] = new_size
+            self._positions_cache[market_idx_str] = pos_data
 
     def _infer_side_from_tpsl(self, entry_price: float, tp_price: float, sl_price: float, order_inferred_side: str = "") -> str:
         """Infer trade direction from TP/SL order data.

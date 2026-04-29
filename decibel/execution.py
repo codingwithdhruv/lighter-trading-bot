@@ -269,4 +269,69 @@ class DecibelExecutionEngine:
         return f"{symbol}/USD"
 
 
+    async def sync_sl_tp(self, symbol: str, side: str, sl_pips: float, tp_pips: float):
+        """Sync SL/TP mid-trade using Decibel's place_tpsl functionality."""
+        positions = self.client.get_positions(symbol)
+        if not positions:
+            logger.info(f"Decibel: No open position for {symbol} to sync TP/SL.")
+            return
+            
+        pos = positions[0]
+        market_addr = pos.get("market_address")
+        if not market_addr:
+            # try to resolve from symbol
+            config = self.client.get_market_config(symbol)
+            market_addr = config.get("market_addr")
+            
+        if not market_addr:
+            logger.error(f"Decibel: Cannot resolve market_address for {symbol}")
+            return
+            
+        entry_price = float(pos.get("avg_entry_px", 0))
+        current_amount = float(pos.get("open_size", pos.get("position_size", pos.get("size", "0"))))
+        
+        if current_amount == 0 or entry_price == 0:
+            return
+            
+        # Determine side
+        is_buy = current_amount > 0
+        
+        tp_price = 0.0
+        sl_price = 0.0
+        if is_buy:
+            if tp_pips > 0: tp_price = entry_price + tp_pips
+            if sl_pips > 0: sl_price = entry_price - sl_pips
+        else:
+            if tp_pips > 0: tp_price = entry_price - tp_pips
+            if sl_pips > 0: sl_price = entry_price + sl_pips
+            
+        # Get decimals
+        config = self.client.get_market_config(symbol)
+        px_decimals = config.get("px_decimals", 8)
+        tick_size = config.get("tick_size", 100)
+        
+        from decibel.utils import amount_to_chain_units, round_to_tick
+        
+        tp_chain = None
+        sl_chain = None
+        
+        if tp_price > 0:
+            tp_chain = round_to_tick(amount_to_chain_units(tp_price, px_decimals), tick_size)
+        if sl_price > 0:
+            sl_chain = round_to_tick(amount_to_chain_units(sl_price, px_decimals), tick_size)
+            
+        logger.info(f"Decibel: Syncing TP/SL for {symbol}. TP: {tp_price}, SL: {sl_price}")
+        result = await self.client.place_tpsl(
+            market_addr=market_addr,
+            tp_trigger=tp_chain,
+            tp_limit=tp_chain,
+            sl_trigger=sl_chain,
+            sl_limit=sl_chain
+        )
+        
+        if not result.get("success"):
+            logger.error(f"Decibel sync TP/SL failed: {result.get('error')}")
+        else:
+            logger.info(f"Decibel sync TP/SL success: {result}")
+
 decibel_executor = DecibelExecutionEngine()

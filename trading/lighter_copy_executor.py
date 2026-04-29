@@ -21,7 +21,7 @@ class LighterCopyExecutor:
             return False
 
         # Get market details from registry
-        market_info = market_registry.get_market(symbol)
+        market_info = market_registry.get_market_config(symbol)
         if not market_info:
             logger.error(f"LighterCopyExecutor: Market {symbol} not found in registry.")
             return False
@@ -44,15 +44,15 @@ class LighterCopyExecutor:
         # In Lighter, we place market orders.
         
         # Round size to market increments
-        min_size = market_info.min_size
-        size_increment = market_info.size_increment
+        min_size = market_info["min_size"]
+        size_increment = market_info["size_increment"]
         rounded_size = round(position_size / size_increment) * size_increment
         if rounded_size < min_size:
             rounded_size = min_size
             
         # Convert to SDK units (int)
         # SDK uses base units, e.g. 1e8 for BTC
-        base_asset_id = market_info.base_asset_id
+        base_asset_id = market_info["base_asset_id"]
         from trading.lighter_client import SignerClient
         scale = SignerClient.ASSET_TO_TICKER_SCALE.get(base_asset_id, 1e8)
         base_amount_sdk = int(rounded_size * scale)
@@ -76,7 +76,7 @@ class LighterCopyExecutor:
         try:
             # Create the order
             tx, resp, err = await self.wrapper.signer_client.create_market_order(
-                market_index=market_info.index,
+                market_index=market_info["market_id"],
                 client_order_index=client_order_idx,
                 base_amount=base_amount_sdk,
                 avg_execution_price=price_sdk,
@@ -104,7 +104,7 @@ class LighterCopyExecutor:
             return False
 
     async def _place_tp_sl(self, symbol, side, entry_price, sl_pips, tp_pips, size):
-        market_info = market_registry.get_market(symbol)
+        market_info = market_registry.get_market_config(symbol)
         if not market_info: return
         
         tp_price = entry_price + tp_pips if side.upper() == "LONG" else entry_price - tp_pips
@@ -116,14 +116,14 @@ class LighterCopyExecutor:
         is_ask = (side.upper() == "LONG")
         
         from trading.lighter_client import SignerClient
-        scale = SignerClient.ASSET_TO_TICKER_SCALE.get(market_info.base_asset_id, 1e8)
+        scale = SignerClient.ASSET_TO_TICKER_SCALE.get(market_info["base_asset_id"], 1e8)
         base_amount_sdk = int(size * scale)
         
         if tp_pips > 0:
             tp_price_sdk = int(tp_price * SignerClient.USDC_TICKER_SCALE)
             logger.info(f"LighterCopyExecutor: Placing TP at {tp_price} for {symbol}")
             await self.wrapper.signer_client.create_order(
-                market_index=market_info.index,
+                market_index=market_info["market_id"],
                 client_order_index=int(time.time() * 1000) + 1,
                 base_amount=base_amount_sdk,
                 price=tp_price_sdk,
@@ -137,7 +137,7 @@ class LighterCopyExecutor:
             sl_price_sdk = int(sl_price * SignerClient.USDC_TICKER_SCALE)
             logger.info(f"LighterCopyExecutor: Placing SL at {sl_price} for {symbol}")
             await self.wrapper.signer_client.create_order(
-                market_index=market_info.index,
+                market_index=market_info["market_id"],
                 client_order_index=int(time.time() * 1000) + 2,
                 base_amount=base_amount_sdk,
                 price=sl_price_sdk,
@@ -174,11 +174,11 @@ class LighterCopyExecutor:
             close_size = current_size * percent_closed
             
             # Place market order to close
-            market_info = market_registry.get_market(symbol)
+            market_info = market_registry.get_market_config(symbol)
             is_ask = (float(position.position) > 0) # Close LONG -> ASK, Close SHORT -> BID
             
             from trading.lighter_client import SignerClient
-            scale = SignerClient.ASSET_TO_TICKER_SCALE.get(market_info.base_asset_id, 1e8)
+            scale = SignerClient.ASSET_TO_TICKER_SCALE.get(market_info["base_asset_id"], 1e8)
             base_amount_sdk = int(close_size * scale)
             
             # Fetch current price for slippage
@@ -190,12 +190,12 @@ class LighterCopyExecutor:
             # Cancel all existing TP/SL first
             await self.wrapper.signer_client.order_api.cancel_all_orders(
                 self.wrapper.signer_client.account_index,
-                market_index=market_info.index,
+                market_index=market_info["market_id"],
                 _headers={"Authorization": auth}
             )
             
             tx, resp, err = await self.wrapper.signer_client.create_market_order(
-                market_index=market_info.index,
+                market_index=market_info["market_id"],
                 client_order_index=int(time.time() * 1000),
                 base_amount=base_amount_sdk,
                 avg_execution_price=price_sdk,
@@ -232,13 +232,13 @@ class LighterCopyExecutor:
                 return
                 
             current_size = abs(float(position.position))
-            market_info = market_registry.get_market(symbol)
+            market_info = market_registry.get_market_config(symbol)
             
             # 2. Cancel old TP/SL
             # Lighter doesn't have a specific "Cancel TP/SL" but we can cancel all orders for this market
             await self.wrapper.signer_client.order_api.cancel_all_orders(
                 self.wrapper.signer_client.account_index,
-                market_index=market_info.index,
+                market_index=market_info["market_id"],
                 _headers={"Authorization": auth}
             )
             

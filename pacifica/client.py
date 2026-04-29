@@ -143,6 +143,25 @@ class PacificaClient:
             logger.error(f"Error fetching Pacifica subaccounts fallback: {e}")
         return 0.0
 
+    def get_open_orders(self, symbol: str = None) -> list:
+        try:
+            target = self.account if self.account else self.public_key_b58
+            if not target:
+                return []
+            resp = requests.get(f"{PACIFICA_REST_URL}/api/v1/orders?account={target}", timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("success"):
+                    orders = data.get("data", [])
+                    # Filter for open status
+                    open_orders = [o for o in orders if o.get("order_status") in ("open", "partially_filled")]
+                    if symbol:
+                        return [o for o in open_orders if o.get("symbol", "").upper() == symbol.upper()]
+                    return open_orders
+        except Exception as e:
+            logger.error(f"Pacifica Fetch Open Orders Error: {e}")
+        return []
+
     def get_positions(self, symbol: str = None) -> list:
         try:
             target = self.account if self.account else self.public_key_b58

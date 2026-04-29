@@ -37,6 +37,9 @@ class MarketRegistry:
                     "price_decimals": getattr(market, "supported_price_decimals", 2),
                     "size_decimals": getattr(market, "supported_size_decimals", 2),
                     "quote_decimals": getattr(market, "supported_quote_decimals", 6),
+                    "base_asset_id": getattr(market, "base_asset_id", 0),
+                    "min_size": float(getattr(market, "min_size", 0.0001)),
+                    "size_increment": float(getattr(market, "size_increment", 0.0001)),
                 }
                 
                 self.markets[market_id] = config

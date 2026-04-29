@@ -477,6 +477,20 @@ class TelegramBotHandler:
             shares['Decibel'] = decibel_client.get_account_balance()
         except: shares['Decibel'] = 0.0
 
+        # 4. Lighter Copy
+        try:
+            from trading.lighter_client import lighter_copy_wrapper
+            account_api_copy = lighter.AccountApi(lighter_copy_wrapper.api_client)
+            auth_copy = lighter_copy_wrapper.get_auth_token()
+            if auth_copy and lighter_copy_wrapper.signer_client:
+                acc_info_copy = await account_api_copy.account(by="index", value=str(lighter_copy_wrapper.signer_client.account_index), _headers={"Authorization": auth_copy})
+                shares['LighterCopy'] = float(acc_info_copy.accounts[0].total_asset_value) if acc_info_copy.accounts else 0.0
+            else:
+                shares['LighterCopy'] = 0.0
+        except Exception as e: 
+            logger.error(f"Failed to fetch LighterCopy balance: {e}")
+            shares['LighterCopy'] = 0.0
+
         total_portfolio_usd = sum(shares.values())
         for exchange, bal in shares.items():
             pct = (bal / total_portfolio_usd * 100) if total_portfolio_usd > 0 else 0
@@ -608,27 +622,32 @@ class TelegramBotHandler:
             "Use the menu below to navigate your empire."
         )
 
-        try:
-            with open(hero_image_path, 'rb') as photo:
-                await update.message.reply_photo(
-                    photo=photo,
-                    caption=welcome_text,
-                    parse_mode='Markdown',
-                    reply_markup=self._get_persistent_menu()
+        import os
+        if os.path.exists(hero_image_path):
+            try:
+                with open(hero_image_path, 'rb') as photo:
+                    await update.message.reply_photo(
+                        photo=photo,
+                        caption=welcome_text,
+                        parse_mode='Markdown',
+                        reply_markup=self._get_persistent_menu()
+                    )
+                # Also show the inline menu
+                await update.message.reply_text(
+                    "📡 *Command Center Select:*",
+                    reply_markup=self._get_main_menu_keyboard(),
+                    parse_mode='Markdown'
                 )
-            # Also show the inline menu
-            await update.message.reply_text(
-                "📡 *Command Center Select:*",
-                reply_markup=self._get_main_menu_keyboard(),
-                parse_mode='Markdown'
-            )
-        except Exception as e:
-            logger.error(f"Failed to send hero image: {e}")
-            await update.message.reply_text(
-                welcome_text,
-                parse_mode='Markdown',
-                reply_markup=self._get_main_menu_keyboard()
-            )
+                return
+            except Exception as e:
+                logger.error(f"Failed to send hero image: {e}")
+        
+        # Fallback if image doesn't exist or fails
+        await update.message.reply_text(
+            welcome_text,
+            parse_mode='Markdown',
+            reply_markup=self._get_main_menu_keyboard()
+        )
 
     async def _help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show pro help menu"""

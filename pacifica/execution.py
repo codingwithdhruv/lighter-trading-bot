@@ -218,4 +218,76 @@ class PacificaExecutionEngine:
 
         return False
 
+    async def sync_sl_tp(self, symbol: str, side: str, sl_pips: float, tp_pips: float):
+        """Sync SL/TP mid-trade on Pacifica."""
+        positions = self.client.get_positions(symbol)
+        if not positions:
+            logger.info(f"Pacifica: No open position for {symbol} to sync TP/SL.")
+            return
+            
+        pos = positions[0]
+        current_amount = float(pos.get("amount", "0"))
+        if current_amount <= 0:
+            return
+            
+        entry_price = float(pos.get("entry_price", pos.get("price", self.client.get_price(symbol))))
+        
+        # Calculate new TP/SL prices
+        tp_price = None
+        sl_price = None
+        # If open position is bid (LONG), close side must be ask (SHORT)
+        pos_side = pos.get("side", "")
+        close_side = "ask" if pos_side == "bid" else "bid"
+        
+        if pos_side == "bid":
+            if tp_pips > 0: tp_price = entry_price + tp_pips
+            if sl_pips > 0: sl_price = entry_price - sl_pips
+        else:
+            if tp_pips > 0: tp_price = entry_price - tp_pips
+            if sl_pips > 0: sl_price = entry_price + sl_pips
+
+        # Cancel old TP/SL orders
+        open_orders = self.client.get_open_orders(symbol)
+        for o in open_orders:
+            # We cancel orders that look like stops or TP/SL
+            o_type = o.get("order_type", "")
+            if "stop" in o_type or "take_profit" in o_type or o.get("reduce_only"):
+                order_id = o.get("order_id")
+                if order_id:
+                    self.client.cancel_order(symbol, order_id)
+                    logger.info(f"Pacifica: Cancelled old TP/SL order {order_id}")
+                    
+        await asyncio.sleep(1) # wait for cancels to process
+        
+        # Format sizes/prices
+        formatted_size = f"{current_amount:.6f}".rstrip("0").rstrip(".")
+        
+        async def place_stop_order(price_val, o_type):
+            if not price_val: return
+            formatted_price = str(int(round(price_val))) if symbol.upper() == "BTC" else f"{price_val:.4f}"
+            operation_data = {
+                "symbol": symbol.upper(),
+                "amount": formatted_size,
+                "side": close_side,
+                "type": o_type,
+                "stop_price": formatted_price,
+                "reduce_only": True,
+                "client_order_id": str(uuid.uuid4())
+            }
+            signed_payload = self.client.sign_payload("create_order", operation_data)
+            try:
+                resp = await asyncio.to_thread(requests.post, f"{PACIFICA_REST_URL}/api/v1/orders/create", json=signed_payload, timeout=5)
+                if resp.status_code == 200:
+                    logger.info(f"Pacifica: Placed {o_type} at {formatted_price} for {symbol}")
+                else:
+                    logger.error(f"Pacifica {o_type} rejected: {resp.text}")
+            except Exception as e:
+                logger.error(f"Pacifica {o_type} error: {e}")
+
+        # Place new ones
+        if tp_price:
+            await place_stop_order(tp_price, "take_profit_market")
+        if sl_price:
+            await place_stop_order(sl_price, "stop_loss_market")
+
 pacifica_executor = PacificaExecutionEngine()
